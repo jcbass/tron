@@ -1,0 +1,10 @@
+{
+  "v": "1.0.0",
+  "manifest": [
+    {
+      "path": "main.py",
+      "url": "https://jcbass.github.io/tron/ota/1.0.0/main.py",
+      "sha256": "ca965c195fc8b7b65de6d0bccfb660ff41149565fe48838c7ca192e0f0008f1b"
+    }
+  ]
+}
