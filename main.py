@@ -325,7 +325,14 @@ HTML_TEMPLATE = """<html><head><title>Tron Control</title></head>
 <body>
 <h1>Tron Effect Control</h1>
 <form action="/set" method="get">
+<fieldset>
+<legend>Ambient Lighting</legend>
 %s
+</fieldset>
+<fieldset>
+<legend>Animation Parameters</legend>
+%s
+</fieldset>
 <button type="submit">Save/Apply</button>
 </form>
 <p><a href="/fire">Trigger FIRE</a></p>
@@ -333,6 +340,20 @@ HTML_TEMPLATE = """<html><head><title>Tron Control</title></head>
 
 
 def render_index():
+    ambient_inputs = [
+        '<input type="hidden" name="strip_on" value="off">',
+        (
+            '<label>Strip On <input type="checkbox" name="strip_on" %s></label><br>'
+            % ("checked" if state["strip_on"] else "")
+        ),
+        (
+            '<label>Strip Brightness '
+            '<input type="number" name="strip_brightness" min="0" max="1" step="0.01" '
+            'value="%.2f"></label><br>'
+            % state["strip_brightness"]
+        ),
+    ]
+
     inputs = []
     params = state["params"]
     for key in (
@@ -362,7 +383,7 @@ def render_index():
                 % (key, key, value)
             )
         inputs.append(input_field)
-    return HTML_TEMPLATE % ("\n".join(inputs))
+    return HTML_TEMPLATE % ("\n".join(ambient_inputs), "\n".join(inputs))
 
 
 def urldecode(value: str) -> str:
@@ -407,6 +428,11 @@ PARAM_TYPES = {
     "BURST_GAP_S": float,
 }
 
+STATE_PARAM_TYPES = {
+    "strip_on": parse_bool,
+    "strip_brightness": float,
+}
+
 
 async def handle_http_client(reader, writer):
     try:
@@ -436,6 +462,7 @@ async def handle_http_client(reader, writer):
             if "?" in path:
                 path, query = path.split("?", 1)
             updates = {}
+            state_updates = {}
             if query:
                 for pair in query.split("&"):
                     if "=" in pair:
@@ -448,15 +475,38 @@ async def handle_http_client(reader, writer):
                                 updates[key] = caster(value)
                             except ValueError:
                                 print("Failed to parse", key, value)
+                        elif key in STATE_PARAM_TYPES:
+                            caster = STATE_PARAM_TYPES[key]
+                            try:
+                                state_updates[key] = caster(value)
+                            except ValueError:
+                                print("Failed to parse", key, value)
                 bool_keys = [k for k, v in PARAM_TYPES.items() if v is parse_bool]
                 for key in bool_keys:
                     if key not in updates:
                         updates[key] = False
+
+            params_changed = False
             if updates:
                 new_params = state["params"].copy()
                 new_params.update(updates)
                 state["params"] = new_params
                 print("Updated params via HTTP:", updates)
+                params_changed = True
+
+            strip_changes = {}
+            if state_updates:
+                if "strip_on" in state_updates:
+                    state["strip_on"] = bool(state_updates["strip_on"])
+                    strip_changes["strip_on"] = state["strip_on"]
+                if "strip_brightness" in state_updates:
+                    brightness = max(0.0, min(1.0, state_updates["strip_brightness"]))
+                    state["strip_brightness"] = brightness
+                    strip_changes["strip_brightness"] = brightness
+                if strip_changes:
+                    print("Updated strip settings via HTTP:", strip_changes)
+
+            if params_changed or strip_changes:
                 apply_steady_state()
             body = "<html><body><p>Parameters updated.</p><p><a href=\"/\">Back</a></p></body></html>"
         elif path.startswith("/fire"):
