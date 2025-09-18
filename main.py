@@ -27,7 +27,7 @@ NEO_PWR_EN_PIN = 38      # Onboard NeoPixel power enable
 # ----------------------------
 # MQTT configuration
 # ----------------------------
-MQTT_HOST = "192.168.1.10"
+MQTT_HOST = "10.6.13.10"
 MQTT_CLIENT_ID = "tron-esp32s3"
 MQTT_TOPIC_CMD = b"tron/cmd"
 MQTT_TOPIC_STATE = b"tron/state"
@@ -36,7 +36,7 @@ MQTT_TOPIC_STATE = b"tron/state"
 # Shared state
 # ----------------------------
 state = {
-    "strip_on": True,
+    "strip_on": False   ,
     "strip_brightness": 0.30,
     "params": {
         "BRIGHTNESS_FACTOR": 0.25,
@@ -369,7 +369,7 @@ def render_index():
         "BOUNCE",
         "MIN_MOTION_WAIT",
         "MAX_MOTION_WAIT",
-        "BURST_GAP_S",
+        "BURST_GAP_S",   
     ):
         value = params[key]
         if isinstance(value, bool):

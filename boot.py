@@ -1,8 +1,8 @@
 import network
 import time
 
-WIFI_SSID = "YourSSID"
-WIFI_PW = "YourPassword"
+WIFI_SSID = "Boys Fort"
+WIFI_PW = "idontknow"
 
 CONNECT_TIMEOUT_MS = 15000
 SLEEP_STEP_MS = 200
