@@ -324,7 +324,8 @@ async def mqtt_loop():
 HTML_TEMPLATE = """<html><head><title>Tron Control</title></head>
 <body>
 <h1>Tron Effect Control</h1>
-<form action="/set" method="get">
+<p id="status"></p>
+<form id="settings-form" action="/set" method="post" onsubmit="saveSettings(event)">
 <fieldset>
 <legend>Ambient Lighting</legend>
 %s
@@ -335,7 +336,52 @@ HTML_TEMPLATE = """<html><head><title>Tron Control</title></head>
 </fieldset>
 <button type="submit">Save/Apply</button>
 </form>
-<p><a href="/fire">Trigger FIRE</a></p>
+<button type="button" onclick="triggerFire()">Trigger FIRE</button>
+<script>
+function saveSettings(event) {
+  event.preventDefault();
+  var form = event.target;
+  var formData = new FormData(form);
+  var statusEl = document.getElementById('status');
+  if (statusEl) {
+    statusEl.textContent = 'Saving...';
+  }
+  fetch('/set', {
+    method: 'POST',
+    body: new URLSearchParams(formData).toString(),
+    headers: {'Content-Type': 'application/x-www-form-urlencoded'}
+  })
+    .then(function(response) {
+      if (!response.ok) {
+        throw new Error('HTTP ' + response.status);
+      }
+      return response.json();
+    })
+    .then(function() {
+      if (statusEl) {
+        statusEl.textContent = 'Saved.';
+      }
+    })
+    .catch(function(err) {
+      console.log('Save failed', err);
+      if (statusEl) {
+        statusEl.textContent = 'Save failed.';
+      }
+    });
+}
+function triggerFire() {
+  fetch('/fire', {method: 'POST'})
+    .then(function(response) {
+      if (!response.ok) {
+        throw new Error('HTTP ' + response.status);
+      }
+      return response.json();
+    })
+    .catch(function(err) {
+      console.log('Trigger FIRE failed', err);
+    });
+}
+</script>
 </body></html>"""
 
 
@@ -447,15 +493,31 @@ async def handle_http_client(reader, writer):
         if len(parts) < 2:
             return
 
+        method = parts[0].upper()
         path = parts[1]
 
+        content_length = 0
         while True:
             header = await reader.readline()
             if not header or header == b"\r\n":
                 break
+            header_str = header.decode().strip()
+            if header_str.lower().startswith("content-length:"):
+                try:
+                    content_length = int(header_str.split(":", 1)[1].strip())
+                except ValueError:
+                    pass
+
+        body_bytes = b""
+        if content_length:
+            try:
+                body_bytes = await reader.readexactly(content_length)
+            except Exception:
+                body_bytes = b""
 
         response_code = "200 OK"
         body = ""
+        content_type = "text/html"
 
         if path.startswith("/set"):
             query = ""
@@ -463,8 +525,18 @@ async def handle_http_client(reader, writer):
                 path, query = path.split("?", 1)
             updates = {}
             state_updates = {}
+            raw_pairs = []
             if query:
-                for pair in query.split("&"):
+                raw_pairs.extend([pair for pair in query.split("&") if pair])
+            if method == "POST" and body_bytes:
+                try:
+                    post_data = body_bytes.decode()
+                except Exception:
+                    post_data = ""
+                if post_data:
+                    raw_pairs.extend([pair for pair in post_data.split("&") if pair])
+            if raw_pairs:
+                for pair in raw_pairs:
                     if "=" in pair:
                         key, value = pair.split("=", 1)
                         key = urldecode(key)
@@ -485,7 +557,6 @@ async def handle_http_client(reader, writer):
                 for key in bool_keys:
                     if key not in updates:
                         updates[key] = False
-
             params_changed = False
             if updates:
                 new_params = state["params"].copy()
@@ -493,7 +564,6 @@ async def handle_http_client(reader, writer):
                 state["params"] = new_params
                 print("Updated params via HTTP:", updates)
                 params_changed = True
-
             strip_changes = {}
             if state_updates:
                 if "strip_on" in state_updates:
@@ -505,18 +575,25 @@ async def handle_http_client(reader, writer):
                     strip_changes["strip_brightness"] = brightness
                 if strip_changes:
                     print("Updated strip settings via HTTP:", strip_changes)
-
             if params_changed or strip_changes:
                 apply_steady_state()
-            body = "<html><body><p>Parameters updated.</p><p><a href=\"/\">Back</a></p></body></html>"
+            if method == "POST":
+                body = "{\"status\":\"ok\"}"
+                content_type = "application/json"
+            else:
+                body = "<html><body><p>Parameters updated.</p><p><a href=\"/\">Back</a></p></body></html>"
         elif path.startswith("/fire"):
             request_fire("http")
-            body = "<html><body><p>FIRE triggered.</p><p><a href=\"/\">Back</a></p></body></html>"
+            if method == "POST":
+                body = "{\"status\":\"fired\"}"
+                content_type = "application/json"
+            else:
+                body = "<html><body><p>FIRE triggered.</p><p><a href=\"/\">Back</a></p></body></html>"
         else:
             body = render_index()
 
         writer.write(("HTTP/1.0 %s\r\n" % response_code).encode())
-        writer.write(b"Content-Type: text/html\r\n")
+        writer.write(("Content-Type: %s\r\n" % content_type).encode())
         writer.write(b"Connection: close\r\n\r\n")
         writer.write(body.encode())
         await writer.drain()
