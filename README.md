@@ -5,7 +5,7 @@ A MicroPython lighting controller for the **Adafruit QT Py ESP32-S3** that drive
 ## Features
 - Motion-activated Tron burst animation with randomized timing.
 - Independent ambient lighting control (on/off, brightness, color temperature).
-- HTTP web interface at the controller IP (http://<ipaddress>) for adjusting ambient settings and animation parameters.
+- HTTP web interface at the controller IP for adjusting ambient settings and animation parameters.
 - MQTT command/state topics for automation systems.
 - Compatible with the Homebridge *easy MQTT* plug-in to expose the light to HomeKit.
 - WebREPL console (enabled by default) for remote REPL access while the device is running.
@@ -100,3 +100,10 @@ mosquitto_pub -h 10.6.13.10 -t tron/cmd/fire -m 1
 ```
 
 Once deployed, the controller runs entirely from `main.py` at boot and requires no further user interaction unless you want to adjust settings or update firmware.
+
+## Notes
+Workflow for updates
+1. Use WebREPL to update files (main.py, boot.py, etc.)
+2. Reboot
+   import machine
+    machine.reset()

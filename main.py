@@ -45,13 +45,17 @@ NEO_PWR_EN_PIN = 38      # Onboard NeoPixel power enable
 MQTT_HOST = "10.6.13.10"
 MQTT_PORT = 1883
 MQTT_CLIENT_ID = "tron-esp32s3"
+
 MQTT_TOPIC_CMD_ON = b"tron/cmd/on"
 MQTT_TOPIC_CMD_BRIGHTNESS = b"tron/cmd/brightness"
 MQTT_TOPIC_CMD_COLORTEMP = b"tron/cmd/colortemp"
 MQTT_TOPIC_CMD_FIRE = b"tron/cmd/fire"
+
 MQTT_TOPIC_STATE_ON = b"tron/state/on"
 MQTT_TOPIC_STATE_BRIGHTNESS = b"tron/state/brightness"
 MQTT_TOPIC_STATE_COLORTEMP = b"tron/state/colortemp"
+MQTT_TOPIC_STATE_FIRE       = b"tron/state/fire"
+
 MQTT_RECONNECT_DELAY_S = 5
 MQTT_KEEPALIVE = 60
 
@@ -435,10 +439,25 @@ def mqtt_message(topic, msg):
         if payload == "1":
             print("MQTT: fire command")
             request_fire("mqtt")
+            try:
+                if _mqtt_client:
+                    # Blink on (optional), then OFF so UI acts momentary
+                    _mqtt_client.publish(MQTT_TOPIC_STATE_FIRE, b"1", retain=False)
+            except Exception as exc:
+                print("MQTT fire state publish failed:", exc)
+
+            # small async delay before resetting OFF so HomeKit can show the toggle
+            async def _reset_fire():
+                await asyncio.sleep_ms(200)
+                try:
+                    if _mqtt_client:
+                        _mqtt_client.publish(MQTT_TOPIC_STATE_FIRE, b"0", retain=True)
+                except Exception as exc:
+                    print("MQTT fire reset failed:", exc)
+
+            asyncio.create_task(_reset_fire())
         else:
             print("MQTT: fire ignored payload '%s'" % payload)
-    else:
-        print("MQTT: unhandled topic %s" % topic)
 
 
 async def mqtt_loop():
