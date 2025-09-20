@@ -189,20 +189,23 @@ def set_cct_color(warm_level, cool_level):
     return (warm, cool, 0)
 
 
+def get_strip_base_color():
+    if not state["strip_on"]:
+        return (0, 0, 0)
+
+    brightness = clamp(state["strip_brightness"], 0.0, 1.0)
+    warm_level, cool_level = colortemp_to_levels(state["strip_colortemp"])
+    warm_value = warm_level * brightness
+    cool_value = cool_level * brightness
+    return set_cct_color(warm_value, cool_value)
+
+
 def apply_steady_state(force: bool = False):
     global _anim_busy
     if _anim_busy and not force:
         return
 
-    if state["strip_on"]:
-        brightness = clamp(state["strip_brightness"], 0.0, 1.0)
-        warm_level, cool_level = colortemp_to_levels(state["strip_colortemp"])
-        warm_value = warm_level * brightness
-        cool_value = cool_level * brightness
-        color = set_cct_color(warm_value, cool_value)
-    else:
-        color = (0, 0, 0)
-
+    color = get_strip_base_color()
     np.fill(color)
     np.write()
 
@@ -269,7 +272,8 @@ def tron_burst(params):
     cycle_complete = False
 
     while not cycle_complete:
-        np.fill((0, 0, 0))
+        base_color = get_strip_base_color()
+        np.fill(base_color)
         for i in range(trail):
             led_pos = position - i
             if led_pos < 0:
@@ -296,9 +300,6 @@ def tron_burst(params):
                 cycle_complete = True
 
         time.sleep(speed)
-
-    np.fill((0, 0, 0))
-    np.write()
 
 
 def motion_irq(pin):
