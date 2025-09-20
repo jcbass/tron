@@ -7,9 +7,24 @@ import micropython
 import uasyncio as asyncio
 
 try:
-    from umqtt.simple import MQTTClient
+    from umqtt.robust import MQTTClient as RobustMQTTClient
 except ImportError:
-    MQTTClient = None
+    RobustMQTTClient = None
+
+try:
+    from umqtt.simple import MQTTClient as SimpleMQTTClient
+except ImportError:
+    SimpleMQTTClient = None
+
+if RobustMQTTClient is not None:
+    MQTTClientClass = RobustMQTTClient
+    MQTT_CLIENT_IMPL = "umqtt.robust"
+elif SimpleMQTTClient is not None:
+    MQTTClientClass = SimpleMQTTClient
+    MQTT_CLIENT_IMPL = "umqtt.simple"
+else:
+    MQTTClientClass = None
+    MQTT_CLIENT_IMPL = None
 
 ENABLE_WEBREPL = True
 
@@ -28,9 +43,24 @@ NEO_PWR_EN_PIN = 38      # Onboard NeoPixel power enable
 # MQTT configuration
 # ----------------------------
 MQTT_HOST = "10.6.13.10"
+MQTT_PORT = 1883
 MQTT_CLIENT_ID = "tron-esp32s3"
-MQTT_TOPIC_CMD = b"tron/cmd"
-MQTT_TOPIC_STATE = b"tron/state"
+
+MQTT_TOPIC_CMD_ON = b"tron/cmd/on"
+MQTT_TOPIC_CMD_BRIGHTNESS = b"tron/cmd/brightness"
+MQTT_TOPIC_CMD_COLORTEMP = b"tron/cmd/colortemp"
+MQTT_TOPIC_CMD_FIRE = b"tron/cmd/fire"
+
+MQTT_TOPIC_STATE_ON = b"tron/state/on"
+MQTT_TOPIC_STATE_BRIGHTNESS = b"tron/state/brightness"
+MQTT_TOPIC_STATE_COLORTEMP = b"tron/state/colortemp"
+MQTT_TOPIC_STATE_FIRE       = b"tron/state/fire"
+
+MQTT_RECONNECT_DELAY_S = 5
+MQTT_KEEPALIVE = 60
+
+COLORTEMP_MIN = 140
+COLORTEMP_MAX = 500
 
 # ----------------------------
 # Shared state
@@ -38,6 +68,7 @@ MQTT_TOPIC_STATE = b"tron/state"
 state = {
     "strip_on": False   ,
     "strip_brightness": 0.30,
+    "strip_colortemp": COLORTEMP_MAX,
     "params": {
         "BRIGHTNESS_FACTOR": 0.25,
         "WARM_LEVEL": 255,
@@ -54,6 +85,32 @@ state = {
         "BURST_GAP_S": 0.0,
     },
 }
+
+MQTT_SUB_TOPICS = (
+    MQTT_TOPIC_CMD_ON,
+    MQTT_TOPIC_CMD_BRIGHTNESS,
+    MQTT_TOPIC_CMD_COLORTEMP,
+    MQTT_TOPIC_CMD_FIRE,
+)
+
+_mqtt_client = None
+_mqtt_last_state = {
+    "on": None,
+    "brightness": None,
+    "colortemp": None,
+}
+
+_mqtt_last_activity = 0
+
+
+def _touch_mqtt_activity():
+    global _mqtt_last_activity
+    _mqtt_last_activity = utime.ticks_ms()
+
+
+def _reset_mqtt_state_cache():
+    for key in _mqtt_last_state:
+        _mqtt_last_state[key] = None
 
 # ----------------------------
 # Initialize hardware (order matters)
@@ -91,6 +148,41 @@ def request_fire(source: str):
         print("Fire queue full; dropping %s" % source)
 
 
+def clamp(value, lower, upper):
+    if value < lower:
+        return lower
+    if value > upper:
+        return upper
+    return value
+
+
+def colortemp_to_levels(colortemp):
+    try:
+        value = int(colortemp)
+    except (TypeError, ValueError):
+        value = COLORTEMP_MAX
+    if value < COLORTEMP_MIN:
+        value = COLORTEMP_MIN
+    elif value > COLORTEMP_MAX:
+        value = COLORTEMP_MAX
+    span = COLORTEMP_MAX - COLORTEMP_MIN
+    if span <= 0:
+        return 255, 0
+    warm_ratio = value - COLORTEMP_MIN
+    warm_level = int((warm_ratio * 255 + span // 2) // span)
+    cool_level = 255 - warm_level
+    return warm_level, cool_level
+
+
+def brightness_to_percent(brightness):
+    percent = int(brightness * 100 + 0.5)
+    if percent < 0:
+        percent = 0
+    elif percent > 100:
+        percent = 100
+    return percent
+
+
 def set_cct_color(warm_level, cool_level):
     warm = max(0, min(255, int(warm_level)))
     cool = max(0, min(255, int(cool_level)))
@@ -102,18 +194,49 @@ def apply_steady_state(force: bool = False):
     if _anim_busy and not force:
         return
 
-    params = state["params"]
     if state["strip_on"]:
-        brightness = state["strip_brightness"]
-        brightness = max(0.0, min(1.0, brightness))
-        warm_value = int(params["WARM_LEVEL"] * brightness)
-        cool_value = int(params["COOL_LEVEL"] * brightness)
+        brightness = clamp(state["strip_brightness"], 0.0, 1.0)
+        warm_level, cool_level = colortemp_to_levels(state["strip_colortemp"])
+        warm_value = warm_level * brightness
+        cool_value = cool_level * brightness
         color = set_cct_color(warm_value, cool_value)
     else:
         color = (0, 0, 0)
 
     np.fill(color)
     np.write()
+
+
+def publish_mqtt_state(force=False):
+    client = _mqtt_client
+    if client is None:
+        return
+
+    on_payload = b"1" if state["strip_on"] else b"0"
+    brightness_pct = brightness_to_percent(state["strip_brightness"])
+    colortemp_value = int(clamp(state["strip_colortemp"], COLORTEMP_MIN, COLORTEMP_MAX))
+    payloads = {
+        "on": on_payload,
+        "brightness": str(brightness_pct).encode(),
+        "colortemp": str(colortemp_value).encode(),
+    }
+    topics = {
+        "on": MQTT_TOPIC_STATE_ON,
+        "brightness": MQTT_TOPIC_STATE_BRIGHTNESS,
+        "colortemp": MQTT_TOPIC_STATE_COLORTEMP,
+    }
+
+    for key in payloads:
+        if not force and _mqtt_last_state[key] == payloads[key]:
+            continue
+        try:
+            client.publish(topics[key], payloads[key], retain=True)
+            _mqtt_last_state[key] = payloads[key]
+            _touch_mqtt_activity()
+        except Exception as exc:
+            print("MQTT publish failed:", exc)
+            _reset_mqtt_state_cache()
+            break
 
 
 def tron_burst(params):
@@ -264,46 +387,118 @@ async def motion_poller():
 
 
 def mqtt_message(topic, msg):
-    message = msg.decode().strip().upper()
-    if message == "ON":
-        state["strip_on"] = True
-        apply_steady_state()
-    elif message == "OFF":
-        state["strip_on"] = False
-        apply_steady_state()
-    elif message.startswith("DIM:"):
+    _touch_mqtt_activity()
+
+    try:
+        payload = msg.decode().strip()
+    except Exception:
+        payload = str(msg)
+
+    topic = topic or b""
+
+    if topic == MQTT_TOPIC_CMD_ON:
+        if payload in ("1", "0"):
+            desired = payload == "1"
+            print("MQTT: base on -> %s" % ("ON" if desired else "OFF"))
+            changed = state["strip_on"] != desired
+            state["strip_on"] = desired
+            if changed:
+                apply_steady_state()
+            publish_mqtt_state(force=True)
+        else:
+            print("MQTT: invalid on payload '%s'" % payload)
+    elif topic == MQTT_TOPIC_CMD_BRIGHTNESS:
         try:
-            value = float(message.split(":", 1)[1])
-            state["strip_brightness"] = max(0.0, min(1.0, value))
-            apply_steady_state()
+            pct_value = float(payload)
         except ValueError:
-            print("Invalid DIM payload:", message)
-    elif message == "FIRE":
-        request_fire("mqtt")
-    else:
-        print("Unknown MQTT command:", message)
+            print("MQTT: invalid brightness '%s'" % payload)
+            return
+        pct_value = clamp(pct_value, 0.0, 100.0)
+        brightness = pct_value / 100.0
+        pct_display = int(pct_value + 0.5)
+        print("MQTT: brightness -> %d%%" % pct_display)
+        changed = state["strip_brightness"] != brightness
+        state["strip_brightness"] = brightness
+        if changed:
+            apply_steady_state()
+        publish_mqtt_state(force=True)
+    elif topic == MQTT_TOPIC_CMD_COLORTEMP:
+        try:
+            colortemp_value = int(float(payload))
+        except ValueError:
+            print("MQTT: invalid colortemp '%s'" % payload)
+            return
+        colortemp_value = int(clamp(colortemp_value, COLORTEMP_MIN, COLORTEMP_MAX))
+        print("MQTT: colortemp -> %d" % colortemp_value)
+        changed = state["strip_colortemp"] != colortemp_value
+        state["strip_colortemp"] = colortemp_value
+        if changed:
+            apply_steady_state()
+        publish_mqtt_state(force=True)
+    elif topic == MQTT_TOPIC_CMD_FIRE:
+        if payload == "1":
+            print("MQTT: fire command")
+            request_fire("mqtt")
+            try:
+                if _mqtt_client:
+                    # Blink on (optional), then OFF so UI acts momentary
+                    _mqtt_client.publish(MQTT_TOPIC_STATE_FIRE, b"1", retain=False)
+            except Exception as exc:
+                print("MQTT fire state publish failed:", exc)
+
+            # small async delay before resetting OFF so HomeKit can show the toggle
+            async def _reset_fire():
+                await asyncio.sleep_ms(200)
+                try:
+                    if _mqtt_client:
+                        _mqtt_client.publish(MQTT_TOPIC_STATE_FIRE, b"0", retain=True)
+                except Exception as exc:
+                    print("MQTT fire reset failed:", exc)
+
+            asyncio.create_task(_reset_fire())
+        else:
+            print("MQTT: fire ignored payload '%s'" % payload)
 
 
 async def mqtt_loop():
-    if MQTTClient is None:
-        print("umqtt.simple not available; MQTT disabled")
+    global _mqtt_client
+
+    if MQTTClientClass is None:
+        print("MQTT client library not available; MQTT disabled")
         return
 
+    print("MQTT using %s" % MQTT_CLIENT_IMPL)
+
     client = None
+    ping_interval_ms = 0
+    if MQTT_KEEPALIVE:
+        ping_interval_ms = int(MQTT_KEEPALIVE * 1000 / 2)
+        if ping_interval_ms <= 0:
+            ping_interval_ms = int(MQTT_KEEPALIVE * 1000)
 
     while True:
         if client is None:
             try:
-                client = MQTTClient(MQTT_CLIENT_ID, MQTT_HOST)
+                client = MQTTClientClass(
+                    MQTT_CLIENT_ID,
+                    MQTT_HOST,
+                    port=MQTT_PORT,
+                    keepalive=MQTT_KEEPALIVE,
+                )
                 client.set_callback(mqtt_message)
                 client.connect()
-                client.publish(MQTT_TOPIC_STATE, b"ONLINE", retain=True)
-                client.subscribe(MQTT_TOPIC_CMD)
-                print("MQTT connected")
+                _touch_mqtt_activity()
+                for topic in MQTT_SUB_TOPICS:
+                    client.subscribe(topic)
+                _mqtt_client = client
+                publish_mqtt_state(force=True)
+                print("MQTT connected (%s)" % MQTT_CLIENT_IMPL)
             except Exception as exc:
                 print("MQTT connect failed:", exc)
                 client = None
-                await asyncio.sleep(5)
+                _mqtt_client = None
+                _reset_mqtt_state_cache()
+                await asyncio.sleep(MQTT_RECONNECT_DELAY_S)
                 continue
 
         try:
@@ -315,8 +510,28 @@ async def mqtt_loop():
             except Exception:
                 pass
             client = None
-            await asyncio.sleep(5)
+            _mqtt_client = None
+            _reset_mqtt_state_cache()
+            await asyncio.sleep(MQTT_RECONNECT_DELAY_S)
             continue
+
+        if ping_interval_ms and hasattr(client, "ping"):
+            now = utime.ticks_ms()
+            if utime.ticks_diff(now, _mqtt_last_activity) >= ping_interval_ms:
+                try:
+                    client.ping()
+                    _touch_mqtt_activity()
+                except Exception as exc:
+                    print("MQTT ping failed:", exc)
+                    try:
+                        client.disconnect()
+                    except Exception:
+                        pass
+                    client = None
+                    _mqtt_client = None
+                    _reset_mqtt_state_cache()
+                    await asyncio.sleep(MQTT_RECONNECT_DELAY_S)
+                    continue
 
         await asyncio.sleep_ms(100)
 
@@ -398,6 +613,12 @@ def render_index():
             'value="%.2f"></label><br>'
             % state["strip_brightness"]
         ),
+        (
+            '<label>Strip Color Temp '
+            '<input type="number" name="strip_colortemp" min="%d" max="%d" step="1" '
+            'value="%d"></label><br>'
+            % (COLORTEMP_MIN, COLORTEMP_MAX, state["strip_colortemp"])
+        ),
     ]
 
     inputs = []
@@ -477,6 +698,7 @@ PARAM_TYPES = {
 STATE_PARAM_TYPES = {
     "strip_on": parse_bool,
     "strip_brightness": float,
+    "strip_colortemp": int,
 }
 
 
@@ -573,10 +795,16 @@ async def handle_http_client(reader, writer):
                     brightness = max(0.0, min(1.0, state_updates["strip_brightness"]))
                     state["strip_brightness"] = brightness
                     strip_changes["strip_brightness"] = brightness
+                if "strip_colortemp" in state_updates:
+                    colortemp = int(clamp(state_updates["strip_colortemp"], COLORTEMP_MIN, COLORTEMP_MAX))
+                    state["strip_colortemp"] = colortemp
+                    strip_changes["strip_colortemp"] = colortemp
                 if strip_changes:
                     print("Updated strip settings via HTTP:", strip_changes)
             if params_changed or strip_changes:
                 apply_steady_state()
+            if strip_changes:
+                publish_mqtt_state(force=True)
             if method == "POST":
                 body = "{\"status\":\"ok\"}"
                 content_type = "application/json"
