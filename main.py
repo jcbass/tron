@@ -548,7 +548,13 @@ def render_index():
     params = state["params"]
 
     def format_label(name: str) -> str:
-        return name.replace("_", " ").title()
+        # MicroPython-compatible title case implementation
+        words = name.replace("_", " ").split()
+        titled_words = []
+        for word in words:
+            if word:
+                titled_words.append(word[0].upper() + word[1:].lower())
+        return " ".join(titled_words)
 
     def format_number(value):
         if isinstance(value, float):
@@ -557,29 +563,6 @@ def render_index():
 
     brightness_value = state["strip_brightness"]
     brightness_percent = brightness_to_percent(brightness_value)
-    ambient_controls = [
-        (
-            '<div class="field slider-field">'
-            "<label for=\"strip_brightness\">Brightness</label>"
-            "<input type=\"range\" id=\"strip_brightness\" name=\"strip_brightness\" min=\"0\" max=\"1\" "
-            "step=\"0.01\" value=\"{value:.2f}\" data-output=\"strip_brightness_output\" "
-            "data-format=\"percent\">"
-            "<output id=\"strip_brightness_output\">{percent}%</output>"
-            "</div>"
-        ).format(value=brightness_value, percent=brightness_percent)
-    ]
-
-    ambient_controls.append(
-        (
-            '<div class="field slider-field">'
-            "<label for=\"strip_colortemp\">Color Temperature</label>"
-            "<input type=\"range\" id=\"strip_colortemp\" name=\"strip_colortemp\" min=\"{min}\" "
-            "max=\"{max}\" step=\"1\" value=\"{value}\" data-output=\"strip_colortemp_output\" "
-            "data-format=\"integer\" data-suffix=\" K\">"
-            "<output id=\"strip_colortemp_output\">{value} K</output>"
-            "</div>"
-        ).format(min=COLORTEMP_MIN, max=COLORTEMP_MAX, value=state["strip_colortemp"])
-    )
 
     animation_controls = []
     for key in (
@@ -649,7 +632,11 @@ def render_index():
             hidden_fields='<input type="hidden" name="strip_on" value="off">',
             strip_on_checked=" checked" if state["strip_on"] else "",
             power_state="On" if state["strip_on"] else "Off",
-            ambient_controls="\n".join(ambient_controls),
+            brightness_value=brightness_value,
+            brightness_percent=brightness_percent,
+            colortemp_value=state["strip_colortemp"],
+            colortemp_min=COLORTEMP_MIN,
+            colortemp_max=COLORTEMP_MAX,
             animation_controls="\n".join(animation_controls),
         )
     except (KeyError, IndexError, ValueError):

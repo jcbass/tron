@@ -71,8 +71,13 @@
         gap: 0.5rem;
       }}
 
+      .slider-field label {{
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+      }}
+
       .slider-field output {{
-        justify-self: end;
         font-size: 0.875rem;
         font-variant-numeric: tabular-nums;
       }}
@@ -117,10 +122,7 @@
         <form id="settings-form" action="/set" method="post" onsubmit="saveSettings(event)">
           {hidden_fields}
           <header class="panel-header">
-            <hgroup>
-              <h1>Tron</h1>
-              <p>Ambient lighting control</p>
-            </hgroup>
+            <h1>Tron</h1>
             <label class="panel-toggle">
               <span>Power</span>
               <input type="checkbox" id="strip_on" name="strip_on"{strip_on_checked} role="switch" aria-label="Tron power">
@@ -128,9 +130,25 @@
             </label>
           </header>
           <section class="control-section">
-            <h2>Ambient Lighting</h2>
             <div class="control-group">
-              {ambient_controls}
+              <div class="field slider-field">
+                <label for="strip_brightness">
+                  <span>Brightness</span>
+                  <output id="strip_brightness_output">{brightness_percent}%</output>
+                </label>
+                <input type="range" id="strip_brightness" name="strip_brightness" min="0" max="1" 
+                       step="0.01" value="{brightness_value:.2f}" data-output="strip_brightness_output" 
+                       data-format="percent">
+              </div>
+              <div class="field slider-field">
+                <label for="strip_colortemp">
+                  <span>Color Temperature</span>
+                  <output id="strip_colortemp_output">{colortemp_value} K</output>
+                </label>
+                <input type="range" id="strip_colortemp" name="strip_colortemp" min="{colortemp_min}" 
+                       max="{colortemp_max}" step="1" value="{colortemp_value}" 
+                       data-output="strip_colortemp_output" data-format="integer" data-suffix=" K">
+              </div>
             </div>
           </section>
           <section class="control-section">
