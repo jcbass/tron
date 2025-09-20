@@ -4,16 +4,16 @@ A MicroPython lighting controller for the **Adafruit QT Py ESP32-S3** that drive
 
 ## Features
 - Motion-activated Tron burst animation with randomized timing.
-- Independent ambient lighting control (on/off, brightness, color temperature) restored after every effect.
-- HTTP web interface at the controller IP for tweaking ambient settings and all animation parameters, plus a one-click "FIRE" button.
-- MQTT command/state topics for automation systems. Works with `umqtt.robust` when available, falls back to `umqtt.simple`, and tolerates a missing MQTT stack.
+- Independent ambient lighting control (on/off, brightness, color temperature).
+- HTTP web interface at the controller IP (http://<ipaddress>) for adjusting ambient settings and animation parameters.
+- MQTT command/state topics for automation systems.
 - Compatible with the Homebridge *easy MQTT* plug-in to expose the light to HomeKit.
-- Optional WebREPL console (enabled by default) for remote REPL access while the device is running.
+- WebREPL console (enabled by default) for remote REPL access while the device is running.
 
 ## Hardware
 - **Controller:** Adafruit QT Py ESP32-S3
 - **LED strip:** BTF Lighting FCOB addressable WS2811 IC CCT COB LED strip
-- **Motion sensor:** PIR (connected to GPIO 8 in the example wiring)
+- **Motion sensor:** Adafruit PIR sensor
 
 ### Pin configuration
 Update these values in `main.py` if your wiring differs:
@@ -26,9 +26,12 @@ LED_COUNT         = 60   # Number of LEDs/pixels
 The onboard NeoPixel power enable (`NEO_PWR_EN_PIN = 38`) and data pin (`NEO_DATA_PIN = 39`) are already configured for the QT Py.
 
 ## Firmware & dependencies
-- Flash the latest MicroPython firmware for ESP32-S3 (UF2) onto the QT Py. See [Adafruit's guide](https://learn.adafruit.com/adafruit-qt-py-esp32-s3/factory-reset) for detailed steps.
-- Copy `boot.py`, `main.py`, and the `ota/` directory to the board (e.g., with Thonny, mpremote, or VS Code + MicroPico).
+- Flash MicroPython for ESP32-S3 to the controller.
+- Copy `boot.py` and `main.py`to the board.
 - The script uses `umqtt.robust` when present, and falls back to `umqtt.simple`. Both modules ship with the official MicroPython firmware. If neither module is available on your build, the controller will continue to run without MQTT integration.
+
+
+ Add notes/tips here on how to install MicroPython and copy files to the microcontroller. (UF2) onto the QT Py. See [Adafruit's guide](https://learn.adafruit.com/adafruit-qt-py-esp32-s3/factory-reset) for detailed steps.
 
 ## Wi-Fi setup
 Edit `boot.py` with your network credentials:
@@ -54,7 +57,7 @@ Command topics (subscribe in your automation platform):
 |-------|---------|-------------|
 | `tron/cmd/on` | `1` or `0` | Turns the ambient strip on or off. |
 | `tron/cmd/brightness` | `0`&hellip;`100` | Sets brightness percentage for the ambient strip. |
-| `tron/cmd/colortemp` | `140`&hellip;`500` | Adjusts color temperature: `500` = full warm (255,0), `140` = full cool (0,255) with a linear blend in between. |
+| `tron/cmd/colortemp` | `140`&hellip;`500` | Adjusts color temperature: `500` = full warm (255,0), `140` = full cool (0,255) with a linear blend in between. The values 500-140 appear to be the HomeKit default values for setting color temperature. |
 | `tron/cmd/fire` | `1` | Triggers a single Tron burst (ignores other values). |
 
 State topics (published with retained messages so new subscribers see the latest values):
@@ -70,8 +73,8 @@ Install the Homebridge *easy MQTT* plug-in and map the above command/state topic
 ## Web interface
 Browse to `http://<controller-ip>/` to open the built-in web UI. The page lets you:
 - Toggle the ambient lighting and set brightness (0.00&ndash;1.00) and color temperature (140&ndash;500).
-- Adjust all Tron animation parameters (speed, trail length, bounce, motion delay, etc.).
-- Fire the Tron animation manually with the **Trigger FIRE** button.
+- Adjust Tron animation parameters (speed, trail length, bounce, motion delay, etc.).
+- Fire the Tron animation manually with the **FIRE** button.
 
 Changes take effect immediately and are echoed to MQTT so HomeKit/Homebridge stays in sync.
 
