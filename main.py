@@ -545,28 +545,43 @@ TEMPLATE_ERROR_HTML = (
 
 
 def render_index():
-    ambient_inputs = [
-        '<input type="hidden" name="strip_on" value="off">',
+    params = state["params"]
+
+    def format_label(name: str) -> str:
+        return name.replace("_", " ").title()
+
+    def format_number(value):
+        if isinstance(value, float):
+            return "{:g}".format(value)
+        return str(value)
+
+    brightness_value = state["strip_brightness"]
+    brightness_percent = brightness_to_percent(brightness_value)
+    ambient_controls = [
         (
-            '<label>Strip On <input type="checkbox" name="strip_on" %s></label><br>'
-            % ("checked" if state["strip_on"] else "")
-        ),
-        (
-            '<label>Strip Brightness '
-            '<input type="number" name="strip_brightness" min="0" max="1" step="0.01" '
-            'value="%.2f"></label><br>'
-            % state["strip_brightness"]
-        ),
-        (
-            '<label>Strip Color Temp '
-            '<input type="number" name="strip_colortemp" min="%d" max="%d" step="1" '
-            'value="%d"></label><br>'
-            % (COLORTEMP_MIN, COLORTEMP_MAX, state["strip_colortemp"])
-        ),
+            '<div class="field slider-field">'
+            "<label for=\"strip_brightness\">Brightness</label>"
+            "<input type=\"range\" id=\"strip_brightness\" name=\"strip_brightness\" min=\"0\" max=\"1\" "
+            "step=\"0.01\" value=\"{value:.2f}\" data-output=\"strip_brightness_output\" "
+            "data-format=\"percent\">"
+            "<output id=\"strip_brightness_output\">{percent}%</output>"
+            "</div>"
+        ).format(value=brightness_value, percent=brightness_percent)
     ]
 
-    inputs = []
-    params = state["params"]
+    ambient_controls.append(
+        (
+            '<div class="field slider-field">'
+            "<label for=\"strip_colortemp\">Color Temperature</label>"
+            "<input type=\"range\" id=\"strip_colortemp\" name=\"strip_colortemp\" min=\"{min}\" "
+            "max=\"{max}\" step=\"1\" value=\"{value}\" data-output=\"strip_colortemp_output\" "
+            "data-format=\"integer\" data-suffix=\" K\">"
+            "<output id=\"strip_colortemp_output\">{value} K</output>"
+            "</div>"
+        ).format(min=COLORTEMP_MIN, max=COLORTEMP_MAX, value=state["strip_colortemp"])
+    )
+
+    animation_controls = []
     for key in (
         "BRIGHTNESS_FACTOR",
         "WARM_LEVEL",
@@ -580,23 +595,48 @@ def render_index():
         "BOUNCE",
         "MIN_MOTION_WAIT",
         "MAX_MOTION_WAIT",
-        "BURST_GAP_S",   
+        "BURST_GAP_S",
     ):
         value = params[key]
+        element_id = "param_" + key.lower()
         if isinstance(value, bool):
-            input_field = (
-                "<label>%s <input type=\"checkbox\" name=\"%s\" %s></label><br>"
-                % (key, key, "checked" if value else "")
+            checked_attr = " checked" if value else ""
+            animation_controls.append(
+                (
+                    '<div class="field checkbox-field">'
+                    "<input type=\"checkbox\" id=\"{element_id}\" name=\"{name}\"{checked}>"
+                    "<label for=\"{element_id}\">{label}</label>"
+                    "</div>"
+                ).format(
+                    element_id=element_id,
+                    name=key,
+                    label=format_label(key),
+                    checked=checked_attr,
+                )
             )
         else:
-            input_field = (
-                "<label>%s <input type=\"text\" name=\"%s\" value=\"%s\"></label><br>"
-                % (key, key, value)
+            if isinstance(value, int):
+                step = "1"
+                inputmode = "numeric"
+            else:
+                step = "0.001"
+                inputmode = "decimal"
+            animation_controls.append(
+                (
+                    '<div class="field">'
+                    "<label for=\"{element_id}\">{label}</label>"
+                    "<input type=\"number\" id=\"{element_id}\" name=\"{name}\" value=\"{value}\" "
+                    "step=\"{step}\" inputmode=\"{inputmode}\">"
+                    "</div>"
+                ).format(
+                    element_id=element_id,
+                    name=key,
+                    label=format_label(key),
+                    value=format_number(value),
+                    step=step,
+                    inputmode=inputmode,
+                )
             )
-        inputs.append(input_field)
-
-    ambient_inputs_html = "\n".join(ambient_inputs)
-    animation_inputs_html = "\n".join(inputs)
 
     try:
         with open(TEMPLATE_PATH, "r") as template_file:
@@ -606,8 +646,11 @@ def render_index():
 
     try:
         return template.format(
-            ambient_inputs=ambient_inputs_html,
-            animation_inputs=animation_inputs_html,
+            hidden_fields='<input type="hidden" name="strip_on" value="off">',
+            strip_on_checked=" checked" if state["strip_on"] else "",
+            power_state="On" if state["strip_on"] else "Off",
+            ambient_controls="\n".join(ambient_controls),
+            animation_controls="\n".join(animation_controls),
         )
     except (KeyError, IndexError, ValueError):
         return TEMPLATE_ERROR_HTML
