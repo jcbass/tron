@@ -1,20 +1,153 @@
-<html><head><title>Tron Control</title></head>
-<body>
-<h1>Tron Effect Control</h1>
-<p id="status"></p>
-<form id="settings-form" action="/set" method="post" onsubmit="saveSettings(event)">
-<fieldset>
-<legend>Ambient Lighting</legend>
-{ambient_inputs}
-</fieldset>
-<fieldset>
-<legend>Animation Parameters</legend>
-{animation_inputs}
-</fieldset>
-<button type="submit">Save/Apply</button>
-</form>
-<button type="button" onclick="triggerFire()">Trigger FIRE</button>
-<script>
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Tron Control</title>
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/@picocss/pico@1/css/pico.classless.min.css"
+    >
+    <style>
+      :root {{
+        color-scheme: light dark;
+      }}
+
+      body {{
+        margin: 0;
+      }}
+
+      main.container {{
+        max-width: 720px;
+        margin: 0 auto;
+        padding: 2rem 1rem 3rem;
+      }}
+
+      article.control-panel {{
+        display: flex;
+        flex-direction: column;
+        gap: 2rem;
+      }}
+
+      .panel-header {{
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+      }}
+
+      .panel-header h1 {{
+        margin-bottom: 0.25rem;
+      }}
+
+      .panel-toggle {{
+        display: inline-flex;
+        align-items: center;
+        gap: 0.75rem;
+        font-weight: 600;
+      }}
+
+      .panel-toggle input[type="checkbox"] {{
+        transform: scale(1.2);
+      }}
+
+      .panel-toggle span {{
+        white-space: nowrap;
+      }}
+
+      .control-section {{
+        display: grid;
+        gap: 1rem;
+      }}
+
+      .control-group {{
+        display: grid;
+        gap: 1rem;
+      }}
+
+      .slider-field {{
+        display: grid;
+        gap: 0.5rem;
+      }}
+
+      .slider-field output {{
+        justify-self: end;
+        font-size: 0.875rem;
+        font-variant-numeric: tabular-nums;
+      }}
+
+      .slider-field input[type="range"] {{
+        width: 100%;
+      }}
+
+      .param-grid {{
+        display: grid;
+        gap: 1rem;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      }}
+
+      .param-grid .field {{
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+      }}
+
+      .param-grid .checkbox-field {{
+        flex-direction: row;
+        align-items: center;
+        gap: 0.5rem;
+      }}
+
+      .actions {{
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        align-items: center;
+      }}
+
+      #status {{
+        min-height: 1.5rem;
+      }}
+    </style>
+  </head>
+  <body>
+    <main class="container">
+      <article class="control-panel">
+        <form id="settings-form" action="/set" method="post" onsubmit="saveSettings(event)">
+          {hidden_fields}
+          <header class="panel-header">
+            <hgroup>
+              <h1>Tron</h1>
+              <p>Ambient lighting control</p>
+            </hgroup>
+            <label class="panel-toggle">
+              <span>Power</span>
+              <input type="checkbox" id="strip_on" name="strip_on"{strip_on_checked} role="switch" aria-label="Tron power">
+              <span id="power-state" data-on="On" data-off="Off">{power_state}</span>
+            </label>
+          </header>
+          <section class="control-section">
+            <h2>Ambient Lighting</h2>
+            <div class="control-group">
+              {ambient_controls}
+            </div>
+          </section>
+          <section class="control-section">
+            <h2>Animation Parameters</h2>
+            <div class="param-grid">
+              {animation_controls}
+            </div>
+          </section>
+          <footer class="actions">
+            <button type="submit">Save &amp; Apply</button>
+            <button type="button" class="secondary" onclick="triggerFire()">Trigger Fire</button>
+          </footer>
+        </form>
+        <p id="status" role="status" aria-live="polite"></p>
+      </article>
+    </main>
+    <script>
 function saveSettings(event) {{
   event.preventDefault();
   var form = event.target;
@@ -46,6 +179,7 @@ function saveSettings(event) {{
       }}
     }});
 }}
+
 function triggerFire() {{
   fetch('/fire', {{method: 'POST'}})
     .then(function(response) {{
@@ -58,5 +192,62 @@ function triggerFire() {{
       console.log('Trigger FIRE failed', err);
     }});
 }}
-</script>
-</body></html>
+
+function formatOutputText(input) {{
+  var format = input.getAttribute('data-format') || '';
+  var value = input.value;
+  var numeric = parseFloat(value);
+  if (format === 'percent' && !isNaN(numeric)) {{
+    return Math.round(numeric * 100) + '%';
+  }}
+  if (format === 'integer' && !isNaN(numeric)) {{
+    return Math.round(numeric) + (input.getAttribute('data-suffix') || '');
+  }}
+  if (!isNaN(numeric)) {{
+    var decimals = input.getAttribute('data-decimals');
+    if (decimals) {{
+      var places = parseInt(decimals, 10);
+      if (!isNaN(places)) {{
+        value = numeric.toFixed(places);
+      }}
+    }}
+  }}
+  var suffix = input.getAttribute('data-suffix') || '';
+  return value + suffix;
+}}
+
+function bindOutputUpdates() {{
+  document.querySelectorAll('input[data-output]').forEach(function(input) {{
+    var outputId = input.getAttribute('data-output');
+    var output = document.getElementById(outputId);
+    if (!output) {{
+      return;
+    }}
+    var update = function() {{
+      output.textContent = formatOutputText(input);
+    }};
+    input.addEventListener('input', update);
+    update();
+  }});
+}}
+
+function updatePowerState() {{
+  var powerInput = document.getElementById('strip_on');
+  var indicator = document.getElementById('power-state');
+  if (!powerInput || !indicator) {{
+    return;
+  }}
+  var onText = indicator.getAttribute('data-on') || 'On';
+  var offText = indicator.getAttribute('data-off') || 'Off';
+  indicator.textContent = powerInput.checked ? onText : offText;
+}}
+
+bindOutputUpdates();
+updatePowerState();
+var powerInput = document.getElementById('strip_on');
+if (powerInput) {{
+  powerInput.addEventListener('change', updatePowerState);
+}}
+    </script>
+  </body>
+</html>
