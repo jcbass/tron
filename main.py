@@ -537,68 +537,11 @@ async def mqtt_loop():
         await asyncio.sleep_ms(100)
 
 
-HTML_TEMPLATE = """<html><head><title>Tron Control</title></head>
-<body>
-<h1>Tron Effect Control</h1>
-<p id="status"></p>
-<form id="settings-form" action="/set" method="post" onsubmit="saveSettings(event)">
-<fieldset>
-<legend>Ambient Lighting</legend>
-%s
-</fieldset>
-<fieldset>
-<legend>Animation Parameters</legend>
-%s
-</fieldset>
-<button type="submit">Save/Apply</button>
-</form>
-<button type="button" onclick="triggerFire()">Trigger FIRE</button>
-<script>
-function saveSettings(event) {
-  event.preventDefault();
-  var form = event.target;
-  var formData = new FormData(form);
-  var statusEl = document.getElementById('status');
-  if (statusEl) {
-    statusEl.textContent = 'Saving...';
-  }
-  fetch('/set', {
-    method: 'POST',
-    body: new URLSearchParams(formData).toString(),
-    headers: {'Content-Type': 'application/x-www-form-urlencoded'}
-  })
-    .then(function(response) {
-      if (!response.ok) {
-        throw new Error('HTTP ' + response.status);
-      }
-      return response.json();
-    })
-    .then(function() {
-      if (statusEl) {
-        statusEl.textContent = 'Saved.';
-      }
-    })
-    .catch(function(err) {
-      console.log('Save failed', err);
-      if (statusEl) {
-        statusEl.textContent = 'Save failed.';
-      }
-    });
-}
-function triggerFire() {
-  fetch('/fire', {method: 'POST'})
-    .then(function(response) {
-      if (!response.ok) {
-        throw new Error('HTTP ' + response.status);
-      }
-      return response.json();
-    })
-    .catch(function(err) {
-      console.log('Trigger FIRE failed', err);
-    });
-}
-</script>
-</body></html>"""
+TEMPLATE_PATH = "template.html"
+TEMPLATE_ERROR_HTML = (
+    "<html><body><h1>Template file not found</h1>"
+    "<p>Please ensure template.html exists.</p></body></html>"
+)
 
 
 def render_index():
@@ -651,7 +594,23 @@ def render_index():
                 % (key, key, value)
             )
         inputs.append(input_field)
-    return HTML_TEMPLATE % ("\n".join(ambient_inputs), "\n".join(inputs))
+
+    ambient_inputs_html = "\n".join(ambient_inputs)
+    animation_inputs_html = "\n".join(inputs)
+
+    try:
+        with open(TEMPLATE_PATH, "r") as template_file:
+            template = template_file.read()
+    except OSError:
+        return TEMPLATE_ERROR_HTML
+
+    try:
+        return template.format(
+            ambient_inputs=ambient_inputs_html,
+            animation_inputs=animation_inputs_html,
+        )
+    except (KeyError, IndexError, ValueError):
+        return TEMPLATE_ERROR_HTML
 
 
 def urldecode(value: str) -> str:

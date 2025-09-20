@@ -1,0 +1,62 @@
+<html><head><title>Tron Control</title></head>
+<body>
+<h1>Tron Effect Control</h1>
+<p id="status"></p>
+<form id="settings-form" action="/set" method="post" onsubmit="saveSettings(event)">
+<fieldset>
+<legend>Ambient Lighting</legend>
+{ambient_inputs}
+</fieldset>
+<fieldset>
+<legend>Animation Parameters</legend>
+{animation_inputs}
+</fieldset>
+<button type="submit">Save/Apply</button>
+</form>
+<button type="button" onclick="triggerFire()">Trigger FIRE</button>
+<script>
+function saveSettings(event) {{
+  event.preventDefault();
+  var form = event.target;
+  var formData = new FormData(form);
+  var statusEl = document.getElementById('status');
+  if (statusEl) {{
+    statusEl.textContent = 'Saving...';
+  }}
+  fetch('/set', {{
+    method: 'POST',
+    body: new URLSearchParams(formData).toString(),
+    headers: {{'Content-Type': 'application/x-www-form-urlencoded'}}
+  }})
+    .then(function(response) {{
+      if (!response.ok) {{
+        throw new Error('HTTP ' + response.status);
+      }}
+      return response.json();
+    }})
+    .then(function() {{
+      if (statusEl) {{
+        statusEl.textContent = 'Saved.';
+      }}
+    }})
+    .catch(function(err) {{
+      console.log('Save failed', err);
+      if (statusEl) {{
+        statusEl.textContent = 'Save failed.';
+      }}
+    }});
+}}
+function triggerFire() {{
+  fetch('/fire', {{method: 'POST'}})
+    .then(function(response) {{
+      if (!response.ok) {{
+        throw new Error('HTTP ' + response.status);
+      }}
+      return response.json();
+    }})
+    .catch(function(err) {{
+      console.log('Trigger FIRE failed', err);
+    }});
+}}
+</script>
+</body></html>
