@@ -86,22 +86,74 @@
         width: 100%;
       }}
 
-      .param-grid {{
+      .animation-section {{
+        display: grid;
+        gap: 1.5rem;
+      }}
+
+      .animation-sliders {{
         display: grid;
         gap: 1rem;
-        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
       }}
 
-      .param-grid .field {{
-        display: flex;
-        flex-direction: column;
-        gap: 0.5rem;
-      }}
-
-      .param-grid .checkbox-field {{
-        flex-direction: row;
+      .switch-field {{
+        display: inline-flex;
         align-items: center;
-        gap: 0.5rem;
+        justify-content: flex-start;
+        gap: 0.75rem;
+        font-weight: 600;
+      }}
+
+      .switch-field input[type="checkbox"] {{
+        transform: scale(1.1);
+      }}
+
+      .range-table {{
+        display: grid;
+        gap: 0.75rem;
+      }}
+
+      .range-row {{
+        display: grid;
+        gap: 0.75rem;
+        align-items: end;
+        grid-template-columns: minmax(140px, 1fr) auto minmax(140px, 1fr);
+      }}
+
+      .range-row .range-label {{
+        text-align: center;
+        font-weight: 600;
+        font-size: 0.875rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }}
+
+      .range-end {{
+        display: grid;
+        gap: 0.25rem;
+      }}
+
+      .range-end label {{
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--muted-color, #666666);
+      }}
+
+      @media (max-width: 600px) {{
+        .animation-sliders {{
+          grid-template-columns: 1fr;
+        }}
+
+        .range-row {{
+          grid-template-columns: 1fr;
+        }}
+
+        .range-row .range-label {{
+          text-align: left;
+        }}
       }}
 
       .actions {{
@@ -153,8 +205,101 @@
           </section>
           <section class="control-section">
             <h2>Animation Parameters</h2>
-            <div class="param-grid">
-              {animation_controls}
+            <div class="animation-section">
+              <div class="animation-sliders">
+                <div class="field slider-field">
+                  <label for="param_brightness_factor">
+                    <span>Brightness</span>
+                    <output id="param_brightness_factor_output">{param_brightness_factor_output}</output>
+                  </label>
+                  <input type="range" id="param_brightness_factor" name="BRIGHTNESS_FACTOR" min="0" max="1"
+                         step="0.01" value="{param_brightness_factor_value}" data-output="param_brightness_factor_output"
+                         data-format="percent">
+                </div>
+                <div class="field slider-field">
+                  <label for="param_temperature">
+                    <span>Temperature</span>
+                    <output id="param_temperature_output">{param_temperature_output}</output>
+                  </label>
+                  <input type="range" id="param_temperature" min="0" max="100" step="1"
+                         value="{param_temperature_value}" data-output="param_temperature_output"
+                         data-format="integer" data-suffix="% warm" data-temperature-total="{param_temperature_total}"
+                         data-temperature-warm="param_warm_level" data-temperature-cool="param_cool_level">
+                </div>
+              </div>
+              <label class="switch-field" for="param_bounce">
+                <span>Bounce</span>
+                <input type="checkbox" id="param_bounce" name="BOUNCE"{param_bounce_checked} role="switch" aria-label="Bounce animation">
+              </label>
+              <div class="range-table">
+                <div class="range-row">
+                  <div class="range-end">
+                    <label for="param_delay_min">Min</label>
+                    <input type="number" id="param_delay_min" name="DELAY_MIN" value="{param_delay_min_value}"
+                           step="{param_delay_min_step}" inputmode="{param_delay_min_inputmode}">
+                  </div>
+                  <div class="range-label">Delay</div>
+                  <div class="range-end">
+                    <label for="param_delay_max">Max</label>
+                    <input type="number" id="param_delay_max" name="DELAY_MAX" value="{param_delay_max_value}"
+                           step="{param_delay_max_step}" inputmode="{param_delay_max_inputmode}">
+                  </div>
+                </div>
+                <div class="range-row">
+                  <div class="range-end">
+                    <label for="param_trail_min">Min</label>
+                    <input type="number" id="param_trail_min" name="TRAIL_MIN" value="{param_trail_min_value}"
+                           step="{param_trail_min_step}" inputmode="{param_trail_min_inputmode}">
+                  </div>
+                  <div class="range-label">Trail</div>
+                  <div class="range-end">
+                    <label for="param_trail_max">Max</label>
+                    <input type="number" id="param_trail_max" name="TRAIL_MAX" value="{param_trail_max_value}"
+                           step="{param_trail_max_step}" inputmode="{param_trail_max_inputmode}">
+                  </div>
+                </div>
+                <div class="range-row">
+                  <div class="range-end">
+                    <label for="param_endpoint_min">Min</label>
+                    <input type="number" id="param_endpoint_min" name="MIN_ENDPOINT" value="{param_endpoint_min_value}"
+                           step="{param_endpoint_min_step}" inputmode="{param_endpoint_min_inputmode}">
+                  </div>
+                  <div class="range-label">Endpoint</div>
+                  <div class="range-end">
+                    <label for="param_endpoint_max">Max</label>
+                    <input type="number" id="param_endpoint_max" name="MAX_ENDPOINT" value="{param_endpoint_max_value}"
+                           step="{param_endpoint_max_step}" inputmode="{param_endpoint_max_inputmode}">
+                  </div>
+                </div>
+                <div class="range-row">
+                  <div class="range-end">
+                    <label for="param_motion_wait_min">Min</label>
+                    <input type="number" id="param_motion_wait_min" name="MIN_MOTION_WAIT" value="{param_motion_wait_min_value}"
+                           step="{param_motion_wait_min_step}" inputmode="{param_motion_wait_min_inputmode}">
+                  </div>
+                  <div class="range-label">Motion Wait</div>
+                  <div class="range-end">
+                    <label for="param_motion_wait_max">Max</label>
+                    <input type="number" id="param_motion_wait_max" name="MAX_MOTION_WAIT" value="{param_motion_wait_max_value}"
+                           step="{param_motion_wait_max_step}" inputmode="{param_motion_wait_max_inputmode}">
+                  </div>
+                </div>
+                <div class="range-row">
+                  <div class="range-end">
+                    <label for="param_burst_gap_min">Min</label>
+                    <input type="number" id="param_burst_gap_min" name="BURST_GAP_S" value="{param_burst_gap_min_value}"
+                           step="{param_burst_gap_step}" inputmode="{param_burst_gap_inputmode}" data-sync="#param_burst_gap_max">
+                  </div>
+                  <div class="range-label">Burst Gap</div>
+                  <div class="range-end">
+                    <label for="param_burst_gap_max">Max</label>
+                    <input type="number" id="param_burst_gap_max" name="BURST_GAP_S" value="{param_burst_gap_max_value}"
+                           step="{param_burst_gap_step}" inputmode="{param_burst_gap_inputmode}" data-sync="#param_burst_gap_min">
+                  </div>
+                </div>
+              </div>
+              <input type="hidden" id="param_warm_level" name="WARM_LEVEL" value="{param_warm_level_value}">
+              <input type="hidden" id="param_cool_level" name="COOL_LEVEL" value="{param_cool_level_value}">
             </div>
           </section>
           <footer class="actions">
@@ -234,6 +379,83 @@ function formatOutputText(input) {{
   return value + suffix;
 }}
 
+function bindSyncedInputs() {{
+  document.querySelectorAll('input[data-sync]').forEach(function(input) {{
+    var selector = input.getAttribute('data-sync');
+    if (!selector) {{
+      return;
+    }}
+    var target = document.querySelector(selector);
+    if (!target) {{
+      return;
+    }}
+    var syncValue = function(source, dest) {{
+      dest.value = source.value;
+    }};
+    input.addEventListener('input', function() {{
+      syncValue(input, target);
+    }});
+    syncValue(input, target);
+  }});
+}}
+
+function bindTemperatureControls() {{
+  document.querySelectorAll('input[data-temperature-warm]').forEach(function(slider) {{
+    var warmId = slider.getAttribute('data-temperature-warm');
+    var coolId = slider.getAttribute('data-temperature-cool');
+    var totalAttr = slider.getAttribute('data-temperature-total');
+    var warmInput = warmId ? document.getElementById(warmId) : null;
+    var coolInput = coolId ? document.getElementById(coolId) : null;
+    if (!warmInput && !coolInput) {{
+      return;
+    }}
+    var warmInitial = warmInput ? parseFloat(warmInput.value) : NaN;
+    var coolInitial = coolInput ? parseFloat(coolInput.value) : NaN;
+    var hasInitialValues = false;
+    var initialTotal = 0;
+    if (isFinite(warmInitial) && warmInitial > 0) {{
+      hasInitialValues = true;
+      initialTotal += warmInitial;
+    }}
+    if (isFinite(coolInitial) && coolInitial > 0) {{
+      hasInitialValues = true;
+      initialTotal += coolInitial;
+    }}
+    var total = parseFloat(totalAttr);
+    if (hasInitialValues) {{
+      total = initialTotal;
+    }}
+    if (!isFinite(total) || total <= 0) {{
+      total = 255;
+    }}
+    var updateTargets = function(value) {{
+      var percent = parseFloat(value);
+      if (isNaN(percent)) {{
+        return;
+      }}
+      if (percent < 0) {{
+        percent = 0;
+      }} else if (percent > 100) {{
+        percent = 100;
+      }}
+      var warmValue = Math.round((total * percent) / 100);
+      var coolValue = Math.round(total - warmValue);
+      if (warmInput) {{
+        warmInput.value = warmValue;
+      }}
+      if (coolInput) {{
+        coolInput.value = coolValue;
+      }}
+    }};
+    slider.addEventListener('input', function() {{
+      updateTargets(slider.value);
+    }});
+    if (hasInitialValues) {{
+      updateTargets(slider.value);
+    }}
+  }});
+}}
+
 function bindOutputUpdates() {{
   document.querySelectorAll('input[data-output]').forEach(function(input) {{
     var outputId = input.getAttribute('data-output');
@@ -260,6 +482,8 @@ function updatePowerState() {{
   indicator.textContent = powerInput.checked ? onText : offText;
 }}
 
+bindSyncedInputs();
+bindTemperatureControls();
 bindOutputUpdates();
 updatePowerState();
 var powerInput = document.getElementById('strip_on');
