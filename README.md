@@ -102,8 +102,18 @@ mosquitto_pub -h 10.6.13.10 -t tron/cmd/fire -m 1
 Once deployed, the controller runs entirely from `main.py` at boot and requires no further user interaction unless you want to adjust settings or update firmware.
 
 ## Notes
-Workflow for updates
+Workflow for updates:
+git: fetch (to fetch all remote branches)
+git: select the new remote branch to create a locally tracked branch
+git: (make sure i'm on the new branch, checkout)
+
 1. Use WebREPL to update files (main.py, boot.py, etc.)
-2. Reboot
-   import machine
-    machine.reset()
+2. Press CTRL-D to reboot
+
+Reboot
+  import machine
+  machine.reset()
+
+import os; print(os.listdir())
+print(open('main.py').readline())  # peek first line
+print(open("main.py").read())      # dumps the file contents
