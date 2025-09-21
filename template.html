@@ -116,38 +116,28 @@
 
       .range-row {{
         display: grid;
-        gap: 0.5rem;
+        gap: 0.25rem;
       }}
 
       .range-row .range-label {{
         font-weight: 600;
-        font-size: 0.875rem;
+        font-size: 1rem;
         text-transform: uppercase;
         letter-spacing: 0.05em;
       }}
 
       .range-inputs {{
         display: grid;
-        gap: 0.75rem;
+        gap: 0.5rem;
         grid-template-columns: repeat(2, minmax(0, 1fr));
-        align-items: end;
       }}
 
-      .range-end {{
-        display: grid;
-        gap: 0.25rem;
-      }}
-
-      .range-end label {{
-        font-size: 0.75rem;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-        color: var(--muted-color, #666666);
-      }}
-
-      .range-end input {{
+      .range-inputs input[type="number"] {{
         width: 100%;
+        padding: 0.3rem 0.5rem;
+        line-height: 1.2;
+        min-height: 0;
+        font-variant-numeric: tabular-nums;
       }}
 
       @media (max-width: 600px) {{
@@ -237,78 +227,58 @@
               </label>
               <div class="range-table">
                 <div class="range-row">
-                  <div class="range-label">Delay</div>
+                  <div class="range-label" id="range-delay-label">Delay</div>
                   <div class="range-inputs">
-                    <div class="range-end">
-                      <label for="param_delay_min">Min</label>
-                      <input type="number" id="param_delay_min" name="DELAY_MIN" value="{param_delay_min_value}"
-                             step="{param_delay_min_step}" inputmode="{param_delay_min_inputmode}">
-                    </div>
-                    <div class="range-end">
-                      <label for="param_delay_max">Max</label>
-                      <input type="number" id="param_delay_max" name="DELAY_MAX" value="{param_delay_max_value}"
-                             step="{param_delay_max_step}" inputmode="{param_delay_max_inputmode}">
-                    </div>
+                    <input type="number" id="param_delay_min" name="DELAY_MIN" value="{param_delay_min_value}"
+                           step="{param_delay_min_step}" inputmode="{param_delay_min_inputmode}" placeholder="Min"
+                           aria-label="Delay minimum">
+                    <input type="number" id="param_delay_max" name="DELAY_MAX" value="{param_delay_max_value}"
+                           step="{param_delay_max_step}" inputmode="{param_delay_max_inputmode}" placeholder="Max"
+                           aria-label="Delay maximum">
                   </div>
                 </div>
                 <div class="range-row">
-                  <div class="range-label">Trail</div>
+                  <div class="range-label" id="range-trail-label">Trail</div>
                   <div class="range-inputs">
-                    <div class="range-end">
-                      <label for="param_trail_min">Min</label>
-                      <input type="number" id="param_trail_min" name="TRAIL_MIN" value="{param_trail_min_value}"
-                             step="{param_trail_min_step}" inputmode="{param_trail_min_inputmode}">
-                    </div>
-                    <div class="range-end">
-                      <label for="param_trail_max">Max</label>
-                      <input type="number" id="param_trail_max" name="TRAIL_MAX" value="{param_trail_max_value}"
-                             step="{param_trail_max_step}" inputmode="{param_trail_max_inputmode}">
-                    </div>
+                    <input type="number" id="param_trail_min" name="TRAIL_MIN" value="{param_trail_min_value}"
+                           step="{param_trail_min_step}" inputmode="{param_trail_min_inputmode}" placeholder="Min"
+                           aria-label="Trail minimum">
+                    <input type="number" id="param_trail_max" name="TRAIL_MAX" value="{param_trail_max_value}"
+                           step="{param_trail_max_step}" inputmode="{param_trail_max_inputmode}" placeholder="Max"
+                           aria-label="Trail maximum">
                   </div>
                 </div>
                 <div class="range-row">
-                  <div class="range-label">Endpoint</div>
+                  <div class="range-label" id="range-endpoint-label">Endpoint</div>
                   <div class="range-inputs">
-                    <div class="range-end">
-                      <label for="param_endpoint_min">Min</label>
-                      <input type="number" id="param_endpoint_min" name="MIN_ENDPOINT" value="{param_endpoint_min_value}"
-                             step="{param_endpoint_min_step}" inputmode="{param_endpoint_min_inputmode}">
-                    </div>
-                    <div class="range-end">
-                      <label for="param_endpoint_max">Max</label>
-                      <input type="number" id="param_endpoint_max" name="MAX_ENDPOINT" value="{param_endpoint_max_value}"
-                             step="{param_endpoint_max_step}" inputmode="{param_endpoint_max_inputmode}">
-                    </div>
+                    <input type="number" id="param_endpoint_min" name="MIN_ENDPOINT" value="{param_endpoint_min_value}"
+                           step="{param_endpoint_min_step}" inputmode="{param_endpoint_min_inputmode}" placeholder="Min"
+                           aria-label="Endpoint minimum">
+                    <input type="number" id="param_endpoint_max" name="MAX_ENDPOINT" value="{param_endpoint_max_value}"
+                           step="{param_endpoint_max_step}" inputmode="{param_endpoint_max_inputmode}" placeholder="Max"
+                           aria-label="Endpoint maximum">
                   </div>
                 </div>
                 <div class="range-row">
-                  <div class="range-label">Motion Wait</div>
+                  <div class="range-label" id="range-motion-label">Motion Wait</div>
                   <div class="range-inputs">
-                    <div class="range-end">
-                      <label for="param_motion_wait_min">Min</label>
-                      <input type="number" id="param_motion_wait_min" name="MIN_MOTION_WAIT" value="{param_motion_wait_min_value}"
-                             step="{param_motion_wait_min_step}" inputmode="{param_motion_wait_min_inputmode}">
-                    </div>
-                    <div class="range-end">
-                      <label for="param_motion_wait_max">Max</label>
-                      <input type="number" id="param_motion_wait_max" name="MAX_MOTION_WAIT" value="{param_motion_wait_max_value}"
-                             step="{param_motion_wait_max_step}" inputmode="{param_motion_wait_max_inputmode}">
-                    </div>
+                    <input type="number" id="param_motion_wait_min" name="MIN_MOTION_WAIT" value="{param_motion_wait_min_value}"
+                           step="{param_motion_wait_min_step}" inputmode="{param_motion_wait_min_inputmode}" placeholder="Min"
+                           aria-label="Motion wait minimum">
+                    <input type="number" id="param_motion_wait_max" name="MAX_MOTION_WAIT" value="{param_motion_wait_max_value}"
+                           step="{param_motion_wait_max_step}" inputmode="{param_motion_wait_max_inputmode}" placeholder="Max"
+                           aria-label="Motion wait maximum">
                   </div>
                 </div>
                 <div class="range-row">
-                  <div class="range-label">Burst Gap</div>
+                  <div class="range-label" id="range-burst-gap-label">Burst Gap</div>
                   <div class="range-inputs">
-                    <div class="range-end">
-                      <label for="param_burst_gap_min">Min</label>
-                      <input type="number" id="param_burst_gap_min" name="BURST_GAP_S" value="{param_burst_gap_min_value}"
-                             step="{param_burst_gap_step}" inputmode="{param_burst_gap_inputmode}" data-sync="#param_burst_gap_max">
-                    </div>
-                    <div class="range-end">
-                      <label for="param_burst_gap_max">Max</label>
-                      <input type="number" id="param_burst_gap_max" name="BURST_GAP_S" value="{param_burst_gap_max_value}"
-                             step="{param_burst_gap_step}" inputmode="{param_burst_gap_inputmode}" data-sync="#param_burst_gap_min">
-                    </div>
+                    <input type="number" id="param_burst_gap_min" name="BURST_GAP_S" value="{param_burst_gap_min_value}"
+                           step="{param_burst_gap_step}" inputmode="{param_burst_gap_inputmode}" data-sync="#param_burst_gap_max"
+                           placeholder="Min" aria-label="Burst gap minimum">
+                    <input type="number" id="param_burst_gap_max" name="BURST_GAP_S" value="{param_burst_gap_max_value}"
+                           step="{param_burst_gap_step}" inputmode="{param_burst_gap_inputmode}" data-sync="#param_burst_gap_min"
+                           placeholder="Max" aria-label="Burst gap maximum">
                   </div>
                 </div>
               </div>
