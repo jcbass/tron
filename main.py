@@ -545,58 +545,114 @@ TEMPLATE_ERROR_HTML = (
 
 
 def render_index():
-    ambient_inputs = [
-        '<input type="hidden" name="strip_on" value="off">',
-        (
-            '<label>Strip On <input type="checkbox" name="strip_on" %s></label><br>'
-            % ("checked" if state["strip_on"] else "")
-        ),
-        (
-            '<label>Strip Brightness '
-            '<input type="number" name="strip_brightness" min="0" max="1" step="0.01" '
-            'value="%.2f"></label><br>'
-            % state["strip_brightness"]
-        ),
-        (
-            '<label>Strip Color Temp '
-            '<input type="number" name="strip_colortemp" min="%d" max="%d" step="1" '
-            'value="%d"></label><br>'
-            % (COLORTEMP_MIN, COLORTEMP_MAX, state["strip_colortemp"])
-        ),
-    ]
-
-    inputs = []
     params = state["params"]
-    for key in (
-        "BRIGHTNESS_FACTOR",
-        "WARM_LEVEL",
-        "COOL_LEVEL",
-        "DELAY_MIN",
-        "DELAY_MAX",
-        "TRAIL_MIN",
-        "TRAIL_MAX",
-        "MIN_ENDPOINT",
-        "MAX_ENDPOINT",
-        "BOUNCE",
-        "MIN_MOTION_WAIT",
-        "MAX_MOTION_WAIT",
-        "BURST_GAP_S",   
-    ):
-        value = params[key]
-        if isinstance(value, bool):
-            input_field = (
-                "<label>%s <input type=\"checkbox\" name=\"%s\" %s></label><br>"
-                % (key, key, "checked" if value else "")
-            )
-        else:
-            input_field = (
-                "<label>%s <input type=\"text\" name=\"%s\" value=\"%s\"></label><br>"
-                % (key, key, value)
-            )
-        inputs.append(input_field)
 
-    ambient_inputs_html = "\n".join(ambient_inputs)
-    animation_inputs_html = "\n".join(inputs)
+    def format_number(value):
+        if isinstance(value, float):
+            return "{:g}".format(value)
+        return str(value)
+
+    brightness_value = state["strip_brightness"]
+    brightness_percent = brightness_to_percent(brightness_value)
+
+    def get_param_attrs(key):
+        value = params.get(key)
+        if value is None:
+            value = 0
+        caster = PARAM_TYPES.get(key)
+        if caster is int:
+            step = "1"
+            inputmode = "numeric"
+        elif caster is float:
+            step = "0.001"
+            inputmode = "decimal"
+        else:
+            step = "0.001"
+            inputmode = "decimal"
+        return format_number(value), step, inputmode
+
+    brightness_factor = params.get("BRIGHTNESS_FACTOR", 0.25)
+    try:
+        brightness_factor = float(brightness_factor)
+    except (TypeError, ValueError):
+        brightness_factor = 0.25
+    brightness_factor = clamp(brightness_factor, 0.0, 1.0)
+    brightness_factor_output = "{}%".format(brightness_to_percent(brightness_factor))
+
+    warm_level = params.get("WARM_LEVEL", 255)
+    try:
+        warm_level = int(warm_level)
+    except (TypeError, ValueError):
+        warm_level = 255
+    if warm_level < 0:
+        warm_level = 0
+
+    cool_level = params.get("COOL_LEVEL", 0)
+    try:
+        cool_level = int(cool_level)
+    except (TypeError, ValueError):
+        cool_level = 0
+    if cool_level < 0:
+        cool_level = 0
+
+    temperature_sum = warm_level + cool_level
+    if temperature_sum > 0:
+        temperature_percent = int(
+            (warm_level * 100 + temperature_sum // 2) // temperature_sum
+        )
+        temperature_total_attr = temperature_sum
+    else:
+        temperature_percent = 0
+        temperature_total_attr = 255
+    if temperature_percent < 0:
+        temperature_percent = 0
+    elif temperature_percent > 100:
+        temperature_percent = 100
+    temperature_output = "{}% warm".format(temperature_percent)
+
+    def store_attrs(target, key, prefix):
+        value, step, inputmode = get_param_attrs(key)
+        target[prefix + "_value"] = value
+        target[prefix + "_step"] = step
+        target[prefix + "_inputmode"] = inputmode
+
+    format_kwargs = {
+        "hidden_fields": '<input type="hidden" name="strip_on" value="off">',
+        "strip_on_checked": " checked" if state["strip_on"] else "",
+        "power_state": "On" if state["strip_on"] else "Off",
+        "brightness_value": brightness_value,
+        "brightness_percent": brightness_percent,
+        "colortemp_value": state["strip_colortemp"],
+        "colortemp_min": COLORTEMP_MIN,
+        "colortemp_max": COLORTEMP_MAX,
+        "param_brightness_factor_value": "{:.3f}".format(brightness_factor),
+        "param_brightness_factor_output": brightness_factor_output,
+        "param_temperature_value": str(temperature_percent),
+        "param_temperature_output": temperature_output,
+        "param_temperature_total": str(temperature_total_attr),
+        "param_warm_level_value": format_number(warm_level),
+        "param_cool_level_value": format_number(cool_level),
+        "param_bounce_checked": " checked" if params.get("BOUNCE") else "",
+    }
+
+    store_attrs(format_kwargs, "DELAY_MIN", "param_delay_min")
+    store_attrs(format_kwargs, "DELAY_MAX", "param_delay_max")
+    store_attrs(format_kwargs, "TRAIL_MIN", "param_trail_min")
+    store_attrs(format_kwargs, "TRAIL_MAX", "param_trail_max")
+    store_attrs(format_kwargs, "MIN_ENDPOINT", "param_endpoint_min")
+    store_attrs(format_kwargs, "MAX_ENDPOINT", "param_endpoint_max")
+    store_attrs(format_kwargs, "MIN_MOTION_WAIT", "param_motion_wait_min")
+    store_attrs(format_kwargs, "MAX_MOTION_WAIT", "param_motion_wait_max")
+
+    gap_value, gap_step, gap_inputmode = get_param_attrs("BURST_GAP_S")
+    format_kwargs.update(
+        {
+            "param_burst_gap_min_value": gap_value,
+            "param_burst_gap_max_value": gap_value,
+            "param_burst_gap_step": gap_step,
+            "param_burst_gap_inputmode": gap_inputmode,
+        }
+    )
 
     try:
         with open(TEMPLATE_PATH, "r") as template_file:
@@ -605,10 +661,7 @@ def render_index():
         return TEMPLATE_ERROR_HTML
 
     try:
-        return template.format(
-            ambient_inputs=ambient_inputs_html,
-            animation_inputs=animation_inputs_html,
-        )
+        return template.format(**format_kwargs)
     except (KeyError, IndexError, ValueError):
         return TEMPLATE_ERROR_HTML
 
