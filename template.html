@@ -20,7 +20,7 @@
       main.container {{
         max-width: 720px;
         margin: 0 auto;
-        padding: 2rem 1rem 3rem;
+        padding: 2rem 1rem 7rem;
       }}
 
       article.control-panel {{
@@ -33,17 +33,18 @@
         display: flex;
         flex-wrap: wrap;
         align-items: center;
-        justify-content: space-between;
+        justify-content: flex-start;
         gap: 1rem;
       }}
 
       .panel-header h1 {{
-        margin-bottom: 0.25rem;
+        margin: 0;
       }}
 
       .panel-toggle {{
         display: inline-flex;
         align-items: center;
+        justify-content: flex-start;
         gap: 0.75rem;
         font-weight: 600;
       }}
@@ -57,13 +58,39 @@
       }}
 
       .control-section {{
-        display: grid;
-        gap: 1rem;
+        display: flex;
+        flex-direction: column;
+      }}
+
+      .control-section > * + * {{
+        margin-top: 1.5rem;
+      }}
+
+      .control-section > h2 {{
+        margin: 0;
+      }}
+
+      .control-section > h2 + * {{
+        margin-top: 0;
+      }}
+
+      .control-section + .control-section {{
+        margin-top: 2rem;
       }}
 
       .control-group {{
         display: grid;
         gap: 1rem;
+      }}
+
+      .toggle-field {{
+        display: flex;
+        justify-content: flex-start;
+        align-items: center;
+      }}
+
+      .power-toggle {{
+        font-size: 1rem;
       }}
 
       .slider-field {{
@@ -150,8 +177,22 @@
         }}
       }}
 
+      .actions-bar {{
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        padding: 0.75rem 1rem;
+        background: var(--pico-background-color, #fff);
+        box-shadow: 0 -0.5rem 1.5rem rgba(0, 0, 0, 0.15);
+        z-index: 100;
+      }}
+
       .actions {{
+        width: min(100%, 720px);
+        margin: 0 auto;
         display: flex;
+        justify-content: flex-end;
         flex-wrap: wrap;
         gap: 0.75rem;
         align-items: center;
@@ -169,14 +210,16 @@
           {hidden_fields}
           <header class="panel-header">
             <h1>Tron</h1>
-            <label class="panel-toggle">
-              <span>Power</span>
-              <input type="checkbox" id="strip_on" name="strip_on"{strip_on_checked} role="switch" aria-label="Tron power">
-              <span id="power-state" data-on="On" data-off="Off">{power_state}</span>
-            </label>
           </header>
           <section class="control-section">
             <div class="control-group">
+              <div class="field toggle-field">
+                <label class="panel-toggle power-toggle">
+                  <span>Power</span>
+                  <input type="checkbox" id="strip_on" name="strip_on"{strip_on_checked} role="switch" aria-label="Tron power">
+                  <span id="power-state" data-on="On" data-off="Off">{power_state}</span>
+                </label>
+              </div>
               <div class="field slider-field">
                 <label for="strip_brightness">
                   <span>Brightness</span>
@@ -286,9 +329,11 @@
               <input type="hidden" id="param_cool_level" name="COOL_LEVEL" value="{param_cool_level_value}">
             </div>
           </section>
-          <footer class="actions">
-            <button type="submit">Save &amp; Apply</button>
-            <button type="button" class="secondary" onclick="triggerFire()">Trigger Fire</button>
+          <footer class="actions-bar">
+            <div class="actions">
+              <button type="submit">Save &amp; Apply</button>
+              <button type="button" class="secondary" onclick="triggerFire()">Trigger Fire</button>
+            </div>
           </footer>
         </form>
         <p id="status" role="status" aria-live="polite"></p>
