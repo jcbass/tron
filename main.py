@@ -1,4 +1,3 @@
-import time
 import utime
 import machine
 import neopixel
@@ -82,7 +81,7 @@ state = {
         "BOUNCE": False,
         "MIN_MOTION_WAIT": 5,
         "MAX_MOTION_WAIT": 20,
-        "BURST_GAP_S": 0.0,
+        "BURST_GAP_MS": 300.0,
     },
 }
 
@@ -138,6 +137,7 @@ _anim_busy = False
 _fire_queue = []
 _motion_flag = False
 _pending_motion = None
+_active_bursts = []
 
 
 def request_fire(source: str):
@@ -242,7 +242,7 @@ def publish_mqtt_state(force=False):
             break
 
 
-def tron_burst(params):
+def _create_burst_state(params):
     num_leds = LED_COUNT
     brightness_factor = params.get("BRIGHTNESS_FACTOR", 0.25)
     warm_level = params.get("WARM_LEVEL", 255)
@@ -255,25 +255,67 @@ def tron_burst(params):
     max_endpoint = int(params.get("MAX_ENDPOINT", num_leds - 1))
     bounce = bool(params.get("BOUNCE", False))
 
+    try:
+        brightness_factor = float(brightness_factor)
+    except (TypeError, ValueError):
+        brightness_factor = 0.25
+    brightness_factor = clamp(brightness_factor, 0.0, 1.0)
+
+    try:
+        warm_level = int(warm_level)
+    except (TypeError, ValueError):
+        warm_level = 255
+    try:
+        cool_level = int(cool_level)
+    except (TypeError, ValueError):
+        cool_level = 0
+    if warm_level < 0:
+        warm_level = 0
+    if cool_level < 0:
+        cool_level = 0
+
     delay_min_ms = max(0.0, float(delay_min_ms))
     delay_max_ms = max(delay_min_ms, float(delay_max_ms))
     trail_min = max(1, int(trail_min))
     trail_max = max(trail_min, int(trail_max))
-    min_endpoint = max(0, min(num_leds - 1, min_endpoint))
-    max_endpoint = max(min_endpoint, min(num_leds - 1, max_endpoint))
+    min_endpoint = max(0, min(num_leds - 1, int(min_endpoint)))
+    max_endpoint = max(min_endpoint, min(num_leds - 1, int(max_endpoint)))
 
-    speed_ms = random.uniform(delay_min_ms, delay_max_ms)
+    speed_ms = max(1.0, random.uniform(delay_min_ms, delay_max_ms))
+    delay_ms = max(1, int(round(speed_ms)))
     trail = random.randint(trail_min, trail_max)
     endpoint = random.randint(min_endpoint, max_endpoint)
     trail = max(1, min(trail, endpoint + 1))
 
-    position = 0
-    direction = 1
-    cycle_complete = False
+    now_ms = utime.ticks_ms()
 
-    while not cycle_complete:
-        base_color = get_strip_base_color()
-        np.fill(base_color)
+    return {
+        "position": 0,
+        "direction": 1,
+        "endpoint": endpoint,
+        "trail": trail,
+        "speed_ms": speed_ms,
+        "delay_ms": delay_ms,
+        "next_step_at": utime.ticks_add(now_ms, delay_ms),
+        "bounce": bounce and endpoint > 0,
+        "brightness_factor": brightness_factor,
+        "warm_level": warm_level,
+        "cool_level": cool_level,
+    }
+
+
+def _render_active_bursts(bursts):
+    if not bursts:
+        return
+    base_color = get_strip_base_color()
+    np.fill(base_color)
+    for burst in bursts:
+        brightness_factor = burst["brightness_factor"]
+        warm_level = burst["warm_level"]
+        cool_level = burst["cool_level"]
+        trail = burst["trail"]
+        endpoint = burst["endpoint"]
+        position = burst["position"]
         for i in range(trail):
             led_pos = position - i
             if led_pos < 0:
@@ -283,24 +325,47 @@ def tron_burst(params):
             brightness = ((trail - i) / trail) * brightness_factor
             warm_value = warm_level * brightness
             cool_value = cool_level * brightness
-            np[led_pos] = set_cct_color(warm_value, cool_value)
+            warm, cool, blue = set_cct_color(warm_value, cool_value)
+            current = np[led_pos]
+            np[led_pos] = (
+                max(current[0], warm),
+                max(current[1], cool),
+                max(current[2], blue),
+            )
+    np.write()
 
-        np.write()
-        position += direction
 
-        if bounce:
-            if position >= endpoint:
-                position = endpoint - 1
-                direction = -1
-            elif position < 0:
-                position = 0
-                cycle_complete = True
-        else:
-            if position > endpoint:
-                cycle_complete = True
+def _step_burst(burst):
+    burst["position"] += burst["direction"]
+    if burst["bounce"]:
+        if burst["direction"] > 0 and burst["position"] >= burst["endpoint"]:
+            burst["position"] = max(0, burst["endpoint"] - 1)
+            burst["direction"] = -1
+        elif burst["direction"] < 0 and burst["position"] <= 0:
+            burst["position"] = 0
+            return False
+    else:
+        if burst["position"] > burst["endpoint"]:
+            return False
+    return True
 
-        # convert stored millisecond delay to seconds for sleep
-        time.sleep(speed_ms / 1000.0)
+
+def _advance_due_bursts(now_ms):
+    changed = False
+    remaining = []
+    for burst in _active_bursts:
+        active = True
+        while utime.ticks_diff(now_ms, burst["next_step_at"]) >= 0:
+            if not _step_burst(burst):
+                active = False
+                changed = True
+                break
+            burst["next_step_at"] = utime.ticks_add(burst["next_step_at"], burst["delay_ms"])
+            changed = True
+        if active:
+            remaining.append(burst)
+    _active_bursts[:] = remaining
+    return changed
 
 
 def motion_irq(pin):
@@ -315,16 +380,34 @@ motion_sensor.irq(trigger=machine.Pin.IRQ_RISING, handler=motion_irq)
 async def animation_consumer():
     global _anim_busy
     while True:
-        if _fire_queue:
+        processed = False
+        while _fire_queue:
             source = _fire_queue.pop(0)
+            burst = _create_burst_state(state["params"])
+            _active_bursts.append(burst)
             _anim_busy = True
+            processed = True
             print("Running Tron burst (source: %s)" % source)
-            try:
-                tron_burst(state["params"])
-            finally:
+        if processed:
+            _render_active_bursts(_active_bursts)
+
+        if not _active_bursts:
+            await asyncio.sleep_ms(5)
+            continue
+
+        now_ms = utime.ticks_ms()
+        next_deadline = min(burst["next_step_at"] for burst in _active_bursts)
+        wait_ms = utime.ticks_diff(next_deadline, now_ms)
+        if wait_ms > 0:
+            await asyncio.sleep_ms(wait_ms)
+            now_ms = utime.ticks_ms()
+
+        if _advance_due_bursts(now_ms):
+            if _active_bursts:
+                _render_active_bursts(_active_bursts)
+            else:
                 _anim_busy = False
                 apply_steady_state(force=True)
-        await asyncio.sleep_ms(50)
 
 
 async def steady_refresh_task():
@@ -377,9 +460,9 @@ async def motion_poller():
                 request_fire("motion")
                 _pending_motion["bursts_left"] -= 1
                 if _pending_motion["bursts_left"] > 0:
-                    gap = state["params"].get("BURST_GAP_S", 0.0)
-                    if gap > 0:
-                        _pending_motion["fire_at"] = utime.ticks_add(utime.ticks_ms(), int(gap * 1000))
+                    gap_ms = state["params"].get("BURST_GAP_MS", 0.0)
+                    if gap_ms > 0:
+                        _pending_motion["fire_at"] = utime.ticks_add(utime.ticks_ms(), int(gap_ms))
                     else:
                         _pending_motion["fire_at"] = utime.ticks_ms()
                 else:
@@ -645,7 +728,7 @@ def render_index():
     store_attrs(format_kwargs, "MIN_MOTION_WAIT", "param_motion_wait_min")
     store_attrs(format_kwargs, "MAX_MOTION_WAIT", "param_motion_wait_max")
 
-    gap_value, gap_step, gap_inputmode = get_param_attrs("BURST_GAP_S")
+    gap_value, gap_step, gap_inputmode = get_param_attrs("BURST_GAP_MS")
     format_kwargs.update(
         {
             "param_burst_gap_min_value": gap_value,
@@ -706,7 +789,7 @@ PARAM_TYPES = {
     "BOUNCE": parse_bool,
     "MIN_MOTION_WAIT": float,
     "MAX_MOTION_WAIT": float,
-    "BURST_GAP_S": float,
+    "BURST_GAP_MS": float,
 }
 
 STATE_PARAM_TYPES = {
