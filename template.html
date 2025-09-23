@@ -20,7 +20,7 @@
       main.container {{
         max-width: 720px;
         margin: 0 auto;
-        padding: 2rem 1rem 7rem;
+        padding: 2rem 1rem 4rem;
       }}
 
       article.control-panel {{
@@ -178,19 +178,11 @@
       }}
 
       .actions-bar {{
-        position: fixed;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        padding: 0.75rem 1rem;
-        background: var(--pico-background-color, #fff);
-        box-shadow: 0 -0.5rem 1.5rem rgba(0, 0, 0, 0.15);
-        z-index: 100;
+        margin-top: 2rem;
+        padding-top: 1rem;
       }}
 
       .actions {{
-        width: min(100%, 720px);
-        margin: 0 auto;
         display: flex;
         justify-content: flex-end;
         flex-wrap: wrap;
@@ -270,7 +262,7 @@
               </label>
               <div class="range-table">
                 <div class="range-row">
-                  <div class="range-label" id="range-delay-label">Delay/Speed (seconds)</div>
+                  <div class="range-label" id="range-delay-label">Delay/Speed (ms)</div>
                   <div class="range-inputs">
                     <input type="number" id="param_delay_min" name="DELAY_MIN" value="{param_delay_min_value}"
                            step="{param_delay_min_step}" inputmode="{param_delay_min_inputmode}" placeholder="Min"
@@ -331,8 +323,7 @@
           </section>
           <footer class="actions-bar">
             <div class="actions">
-              <button type="submit">Save &amp; Apply</button>
-              <button type="button" class="secondary" onclick="triggerFire()">Trigger Fire</button>
+              <button type="button" class="secondary" onclick="triggerFire()">Fire</button>
             </div>
           </footer>
         </form>
@@ -340,15 +331,16 @@
       </article>
     </main>
     <script>
-function saveSettings(event) {{
-  event.preventDefault();
-  var form = event.target;
+function submitSettingsForm(form) {{
+  if (!form) {{
+    return Promise.resolve();
+  }}
   var formData = new FormData(form);
   var statusEl = document.getElementById('status');
   if (statusEl) {{
     statusEl.textContent = 'Saving...';
   }}
-  fetch('/set', {{
+  return fetch('/set', {{
     method: 'POST',
     body: new URLSearchParams(formData).toString(),
     headers: {{'Content-Type': 'application/x-www-form-urlencoded'}}
@@ -370,6 +362,11 @@ function saveSettings(event) {{
         statusEl.textContent = 'Save failed.';
       }}
     }});
+}}
+
+function saveSettings(event) {{
+  event.preventDefault();
+  submitSettingsForm(event.target);
 }}
 
 function triggerFire() {{
@@ -500,6 +497,42 @@ function bindOutputUpdates() {{
   }});
 }}
 
+function bindAutosaveSettings() {{
+  var form = document.getElementById('settings-form');
+  if (!form) {{
+    return;
+  }}
+  var pendingSave = null;
+  var scheduleSave = function(delay) {{
+    if (pendingSave) {{
+      clearTimeout(pendingSave);
+    }}
+    pendingSave = setTimeout(function() {{
+      pendingSave = null;
+      submitSettingsForm(form);
+    }}, delay);
+  }};
+  var immediateSave = function() {{
+    scheduleSave(0);
+  }};
+  var debouncedSave = function() {{
+    scheduleSave(400);
+  }};
+  var inputs = form.querySelectorAll('input');
+  inputs.forEach(function(input) {{
+    var type = (input.getAttribute('type') || '').toLowerCase();
+    if (type === 'hidden' || input.disabled) {{
+      return;
+    }}
+    if (type === 'range' || type === 'checkbox' || type === 'radio') {{
+      input.addEventListener('change', immediateSave);
+    }} else {{
+      input.addEventListener('change', immediateSave);
+      input.addEventListener('input', debouncedSave);
+    }}
+  }});
+}}
+
 function updatePowerState() {{
   var powerInput = document.getElementById('strip_on');
   var indicator = document.getElementById('power-state');
@@ -514,6 +547,7 @@ function updatePowerState() {{
 bindSyncedInputs();
 bindTemperatureControls();
 bindOutputUpdates();
+bindAutosaveSettings();
 updatePowerState();
 var powerInput = document.getElementById('strip_on');
 if (powerInput) {{

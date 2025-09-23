@@ -32,7 +32,7 @@ ENABLE_WEBREPL = True
 # Hardware pins / strip config
 # ----------------------------
 LED_PIN = 18             # Strip data pin
-LED_COUNT = 60
+LED_COUNT = 120
 MOTION_SENSOR_PIN = 8    # PIR OUT connected here
 
 # Onboard NeoPixel (QT Py ESP32-S3)
@@ -67,18 +67,18 @@ COLORTEMP_MAX = 500
 # ----------------------------
 state = {
     "strip_on": False   ,
-    "strip_brightness": 0.30,
+    "strip_brightness": 0.02,
     "strip_colortemp": COLORTEMP_MAX,
     "params": {
         "BRIGHTNESS_FACTOR": 0.25,
         "WARM_LEVEL": 255,
         "COOL_LEVEL": 0,
-        "DELAY_MIN": 0.005,
-        "DELAY_MAX": 0.010,
+        "DELAY_MIN": 3.0,   # delay values stored in milliseconds
+        "DELAY_MAX": 10.0,
         "TRAIL_MIN": 1,
-        "TRAIL_MAX": 3,
-        "MIN_ENDPOINT": 57,
-        "MAX_ENDPOINT": 57,
+        "TRAIL_MAX": 12,
+        "MIN_ENDPOINT": 120,
+        "MAX_ENDPOINT": 120,
         "BOUNCE": False,
         "MIN_MOTION_WAIT": 5,
         "MAX_MOTION_WAIT": 20,
@@ -247,22 +247,22 @@ def tron_burst(params):
     brightness_factor = params.get("BRIGHTNESS_FACTOR", 0.25)
     warm_level = params.get("WARM_LEVEL", 255)
     cool_level = params.get("COOL_LEVEL", 0)
-    delay_min = params.get("DELAY_MIN", 0.005)
-    delay_max = params.get("DELAY_MAX", 0.010)
+    delay_min_ms = params.get("DELAY_MIN", 5.0)
+    delay_max_ms = params.get("DELAY_MAX", 10.0)
     trail_min = params.get("TRAIL_MIN", 1)
     trail_max = params.get("TRAIL_MAX", 3)
     min_endpoint = int(params.get("MIN_ENDPOINT", num_leds - 1))
     max_endpoint = int(params.get("MAX_ENDPOINT", num_leds - 1))
     bounce = bool(params.get("BOUNCE", False))
 
-    delay_min = max(0.0, delay_min)
-    delay_max = max(delay_min, delay_max)
+    delay_min_ms = max(0.0, float(delay_min_ms))
+    delay_max_ms = max(delay_min_ms, float(delay_max_ms))
     trail_min = max(1, int(trail_min))
     trail_max = max(trail_min, int(trail_max))
     min_endpoint = max(0, min(num_leds - 1, min_endpoint))
     max_endpoint = max(min_endpoint, min(num_leds - 1, max_endpoint))
 
-    speed = random.uniform(delay_min, delay_max)
+    speed_ms = random.uniform(delay_min_ms, delay_max_ms)
     trail = random.randint(trail_min, trail_max)
     endpoint = random.randint(min_endpoint, max_endpoint)
     trail = max(1, min(trail, endpoint + 1))
@@ -299,7 +299,8 @@ def tron_burst(params):
             if position > endpoint:
                 cycle_complete = True
 
-        time.sleep(speed)
+        # convert stored millisecond delay to seconds for sleep
+        time.sleep(speed_ms / 1000.0)
 
 
 def motion_irq(pin):
@@ -713,7 +714,6 @@ STATE_PARAM_TYPES = {
     "strip_brightness": float,
     "strip_colortemp": int,
 }
-
 
 async def handle_http_client(reader, writer):
     try:
