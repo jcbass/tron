@@ -4,6 +4,7 @@ import neopixel
 import random
 import micropython
 import uasyncio as asyncio
+import gc
 
 try:
     from umqtt.robust import MQTTClient as RobustMQTTClient
@@ -26,6 +27,24 @@ else:
     MQTT_CLIENT_IMPL = None
 
 ENABLE_WEBREPL = True
+ENABLE_MEMORY_DEBUG = True
+_MEMORY_LOG_INTERVAL_MS = 2000
+_last_memory_log = utime.ticks_add(utime.ticks_ms(), -_MEMORY_LOG_INTERVAL_MS)
+
+def log_memory(tag, *, force=False, collect=False):
+    global _last_memory_log
+    if not ENABLE_MEMORY_DEBUG:
+        return
+    now = utime.ticks_ms()
+    if not force and utime.ticks_diff(now, _last_memory_log) < _MEMORY_LOG_INTERVAL_MS:
+        return
+    if collect:
+        gc.collect()
+    free = gc.mem_free()
+    alloc = gc.mem_alloc()
+    total = free + alloc
+    print("[mem] %s free=%d alloc=%d total=%d" % (tag, free, alloc, total))
+    _last_memory_log = now
 
 # ----------------------------
 # Hardware pins / strip config
@@ -82,6 +101,8 @@ state = {
         "MIN_MOTION_WAIT": 5,
         "MAX_MOTION_WAIT": 20,
         "BURST_GAP_MS": 300.0,
+        "BURST_GAP_MIN_MS": 150.0,
+        "BURST_GAP_MAX_MS": 450.0,
     },
 }
 
@@ -134,18 +155,79 @@ micropython.alloc_emergency_exception_buf(100)
 # Animation helpers
 # ----------------------------
 _anim_busy = False
-_fire_queue = []
+_fire_sequence = None
 _motion_flag = False
 _pending_motion = None
 _active_bursts = []
 
 
+def _coerce_float(value, fallback=0.0):
+    if value is None:
+        value = fallback
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        try:
+            return float(fallback)
+        except (TypeError, ValueError):
+            return 0.0
+
+
+def _resolve_burst_gap_range(params):
+    fallback = params.get("BURST_GAP_MS", 0.0)
+    gap_min = _coerce_float(params.get("BURST_GAP_MIN_MS"), fallback)
+    gap_max = _coerce_float(params.get("BURST_GAP_MAX_MS"), fallback)
+    if gap_min < 0:
+        gap_min = 0.0
+    if gap_max < 0:
+        gap_max = 0.0
+    if gap_max < gap_min:
+        gap_min, gap_max = gap_max, gap_min
+    return gap_min, gap_max
+
+
+def _sample_burst_gap_ms_from_range(gap_min, gap_max):
+    if gap_max <= 0:
+        return 0
+    if gap_max <= gap_min:
+        return int(gap_min)
+    gap = random.uniform(gap_min, gap_max)
+    if gap <= 0:
+        return 0
+    return int(gap + 0.5)
+
+
 def request_fire(source: str):
-    global _fire_queue
-    if len(_fire_queue) < 4:
-        _fire_queue.append(source)
-    else:
-        print("Fire queue full; dropping %s" % source)
+    global _fire_sequence
+    params = state["params"]
+    if _pending_motion is not None and source != "motion":
+        print("Fire ignored (%s); motion delay active" % source)
+        return False
+    if _anim_busy or _active_bursts:
+        print("Fire ignored (%s); animation busy" % source)
+        return False
+    if _fire_sequence is not None:
+        print("Fire ignored (%s); request already pending" % source)
+        return False
+
+    if "BURST_GAP_MIN_MS" not in params and "BURST_GAP_MS" in params:
+        params["BURST_GAP_MIN_MS"] = _coerce_float(params["BURST_GAP_MS"], 0.0)
+    if "BURST_GAP_MAX_MS" not in params and "BURST_GAP_MS" in params:
+        params["BURST_GAP_MAX_MS"] = _coerce_float(params["BURST_GAP_MS"], 0.0)
+
+    burst_total = random.randint(1, 3)
+    gap_min, gap_max = _resolve_burst_gap_range(params)
+    now_ms = utime.ticks_ms()
+    _fire_sequence = {
+        "source": source,
+        "remaining": burst_total,
+        "total": burst_total,
+        "gap_min": gap_min,
+        "gap_max": gap_max,
+        "next_fire_at": now_ms,
+    }
+    print("Fire accepted (%s); scheduling %d burst(s)" % (source, burst_total))
+    return True
 
 
 def clamp(value, lower, upper):
@@ -378,16 +460,28 @@ motion_sensor.irq(trigger=machine.Pin.IRQ_RISING, handler=motion_irq)
 
 
 async def animation_consumer():
-    global _anim_busy
+    global _anim_busy, _fire_sequence
     while True:
         processed = False
-        while _fire_queue:
-            source = _fire_queue.pop(0)
-            burst = _create_burst_state(state["params"])
-            _active_bursts.append(burst)
-            _anim_busy = True
-            processed = True
-            print("Running Tron burst (source: %s)" % source)
+        seq = _fire_sequence
+        if seq is not None:
+            now_ms = utime.ticks_ms()
+            if utime.ticks_diff(now_ms, seq["next_fire_at"]) >= 0:
+                seq_source = seq.get("source", "?")
+                seq_total = seq.get("total", 1)
+                seq["remaining"] -= 1
+                burst = _create_burst_state(state["params"])
+                _active_bursts.append(burst)
+                _anim_busy = True
+                processed = True
+                fired_index = seq_total - seq["remaining"]
+                print("Running Tron burst (source: %s #%d/%d)" % (seq_source, fired_index, seq_total))
+                log_memory("anim burst start (%s #%d)" % (seq_source, fired_index), force=True)
+                if seq["remaining"] > 0:
+                    gap_ms = _sample_burst_gap_ms_from_range(seq["gap_min"], seq["gap_max"])
+                    seq["next_fire_at"] = utime.ticks_add(now_ms, gap_ms)
+                else:
+                    _fire_sequence = None
         if processed:
             _render_active_bursts(_active_bursts)
 
@@ -416,57 +510,55 @@ async def steady_refresh_task():
         apply_steady_state()
 
 
+async def memory_monitor():
+    log_memory("memory monitor start", force=True, collect=True)
+    while True:
+        await asyncio.sleep(30)
+        log_memory("memory monitor tick", force=True, collect=True)
+
+
 async def motion_poller():
-    global _motion_flag, _pending_motion
+    global _motion_flag, _pending_motion, _anim_busy
     last_level = motion_sensor.value()
     print("PIR initial level:", "HIGH" if last_level else "LOW")
 
     while True:
         cur = motion_sensor.value()
         if cur != last_level:
-            print("PIR:", "HIGH" if cur else "LOW")
             last_level = cur
             set_indicator(cur)
 
         if _motion_flag:
             _motion_flag = False
             if _pending_motion is None:
-                params = state["params"]
-                min_wait = max(0.0, float(params["MIN_MOTION_WAIT"]))
-                max_wait = max(min_wait, float(params["MAX_MOTION_WAIT"]))
-                wait_time = random.uniform(min_wait, max_wait)
-                burst_total = random.randint(1, 3)
-                fire_at = utime.ticks_add(utime.ticks_ms(), int(wait_time * 1000))
-                _pending_motion = {
-                    "burst_total": burst_total,
-                    "bursts_left": burst_total,
-                    "fire_at": fire_at,
-                    "printed": False,
-                    "wait_time": wait_time,
-                }
-
-        if _pending_motion is not None:
-            if not _pending_motion["printed"]:
-                print(
-                    "Motion detected! Waiting %.2f seconds before running %d tron burst(s)..."
-                    % (
-                        _pending_motion["wait_time"],
-                        _pending_motion["burst_total"],
-                    )
-                )
-                _pending_motion["printed"] = True
-
-            if utime.ticks_diff(utime.ticks_ms(), _pending_motion["fire_at"]) >= 0:
-                request_fire("motion")
-                _pending_motion["bursts_left"] -= 1
-                if _pending_motion["bursts_left"] > 0:
-                    gap_ms = state["params"].get("BURST_GAP_MS", 0.0)
-                    if gap_ms > 0:
-                        _pending_motion["fire_at"] = utime.ticks_add(utime.ticks_ms(), int(gap_ms))
-                    else:
-                        _pending_motion["fire_at"] = utime.ticks_ms()
+                if _anim_busy or _active_bursts:
+                    print("Motion ignored; animation busy")
+                elif _fire_sequence is not None:
+                    print("Motion ignored; fire already pending")
                 else:
-                    _pending_motion = None
+                    params = state["params"]
+                    min_wait = max(0.0, float(params["MIN_MOTION_WAIT"]))
+                    max_wait = max(min_wait, float(params["MAX_MOTION_WAIT"]))
+                    wait_time = random.uniform(min_wait, max_wait)
+                    fire_at = utime.ticks_add(utime.ticks_ms(), int(wait_time * 1000))
+                    _pending_motion = {
+                        "fire_at": fire_at,
+                        "printed": False,
+                        "wait_time": wait_time,
+                    }
+            else:
+                print("Motion ignored; delay already pending")
+
+        pending = _pending_motion
+        if pending is not None:
+            if not pending["printed"]:
+                print("Motion detected! Waiting %.2f seconds before running tron burst sequence..." % pending["wait_time"])
+                pending["printed"] = True
+
+            if utime.ticks_diff(utime.ticks_ms(), pending["fire_at"]) >= 0:
+                _pending_motion = None
+                if not request_fire("motion"):
+                    print("Motion fire dropped; conditions blocked trigger")
 
         await asyncio.sleep_ms(100)
 
@@ -482,6 +574,7 @@ def mqtt_message(topic, msg):
     topic = topic or b""
 
     if topic == MQTT_TOPIC_CMD_ON:
+        log_memory("mqtt cmd on", force=True)
         if payload in ("1", "0"):
             desired = payload == "1"
             print("MQTT: base on -> %s" % ("ON" if desired else "OFF"))
@@ -493,6 +586,7 @@ def mqtt_message(topic, msg):
         else:
             print("MQTT: invalid on payload '%s'" % payload)
     elif topic == MQTT_TOPIC_CMD_BRIGHTNESS:
+        log_memory("mqtt cmd brightness", force=True)
         try:
             pct_value = float(payload)
         except ValueError:
@@ -508,6 +602,7 @@ def mqtt_message(topic, msg):
             apply_steady_state()
         publish_mqtt_state(force=True)
     elif topic == MQTT_TOPIC_CMD_COLORTEMP:
+        log_memory("mqtt cmd colortemp", force=True)
         try:
             colortemp_value = int(float(payload))
         except ValueError:
@@ -521,26 +616,29 @@ def mqtt_message(topic, msg):
             apply_steady_state()
         publish_mqtt_state(force=True)
     elif topic == MQTT_TOPIC_CMD_FIRE:
+        log_memory("mqtt cmd fire", force=True)
         if payload == "1":
             print("MQTT: fire command")
-            request_fire("mqtt")
-            try:
-                if _mqtt_client:
-                    # Blink on (optional), then OFF so UI acts momentary
-                    _mqtt_client.publish(MQTT_TOPIC_STATE_FIRE, b"1", retain=False)
-            except Exception as exc:
-                print("MQTT fire state publish failed:", exc)
-
-            # small async delay before resetting OFF so HomeKit can show the toggle
-            async def _reset_fire():
-                await asyncio.sleep_ms(200)
+            if request_fire("mqtt"):
                 try:
                     if _mqtt_client:
-                        _mqtt_client.publish(MQTT_TOPIC_STATE_FIRE, b"0", retain=True)
+                        # Blink on (optional), then OFF so UI acts momentary
+                        _mqtt_client.publish(MQTT_TOPIC_STATE_FIRE, b"1", retain=False)
                 except Exception as exc:
-                    print("MQTT fire reset failed:", exc)
+                    print("MQTT fire state publish failed:", exc)
 
-            asyncio.create_task(_reset_fire())
+                # small async delay before resetting OFF so HomeKit can show the toggle
+                async def _reset_fire():
+                    await asyncio.sleep_ms(200)
+                    try:
+                        if _mqtt_client:
+                            _mqtt_client.publish(MQTT_TOPIC_STATE_FIRE, b"0", retain=True)
+                    except Exception as exc:
+                        print("MQTT fire reset failed:", exc)
+
+                asyncio.create_task(_reset_fire())
+            else:
+                print("MQTT: fire ignored; busy or delayed")
         else:
             print("MQTT: fire ignored payload '%s'" % payload)
 
@@ -553,6 +651,7 @@ async def mqtt_loop():
         return
 
     print("MQTT using %s" % MQTT_CLIENT_IMPL)
+    log_memory("mqtt init", force=True, collect=True)
 
     client = None
     ping_interval_ms = 0
@@ -578,8 +677,10 @@ async def mqtt_loop():
                 _mqtt_client = client
                 publish_mqtt_state(force=True)
                 print("MQTT connected (%s)" % MQTT_CLIENT_IMPL)
+                log_memory("mqtt connected", force=True, collect=True)
             except Exception as exc:
                 print("MQTT connect failed:", exc)
+                log_memory("mqtt connect fail", force=True, collect=True)
                 client = None
                 _mqtt_client = None
                 _reset_mqtt_state_cache()
@@ -590,6 +691,7 @@ async def mqtt_loop():
             client.check_msg()
         except Exception as exc:
             print("MQTT error:", exc)
+            log_memory("mqtt error", force=True, collect=True)
             try:
                 client.disconnect()
             except Exception:
@@ -608,6 +710,7 @@ async def mqtt_loop():
                     _touch_mqtt_activity()
                 except Exception as exc:
                     print("MQTT ping failed:", exc)
+                    log_memory("mqtt ping fail", force=True, collect=True)
                     try:
                         client.disconnect()
                     except Exception:
@@ -641,6 +744,8 @@ def render_index():
 
     def get_param_attrs(key):
         value = params.get(key)
+        if value is None and key in ("BURST_GAP_MIN_MS", "BURST_GAP_MAX_MS"):
+            value = params.get("BURST_GAP_MS")
         if value is None:
             value = 0
         caster = PARAM_TYPES.get(key)
@@ -727,16 +832,10 @@ def render_index():
     store_attrs(format_kwargs, "MAX_ENDPOINT", "param_endpoint_max")
     store_attrs(format_kwargs, "MIN_MOTION_WAIT", "param_motion_wait_min")
     store_attrs(format_kwargs, "MAX_MOTION_WAIT", "param_motion_wait_max")
-
-    gap_value, gap_step, gap_inputmode = get_param_attrs("BURST_GAP_MS")
-    format_kwargs.update(
-        {
-            "param_burst_gap_min_value": gap_value,
-            "param_burst_gap_max_value": gap_value,
-            "param_burst_gap_step": gap_step,
-            "param_burst_gap_inputmode": gap_inputmode,
-        }
-    )
+    store_attrs(format_kwargs, "BURST_GAP_MIN_MS", "param_burst_gap_min")
+    store_attrs(format_kwargs, "BURST_GAP_MAX_MS", "param_burst_gap_max")
+    format_kwargs["param_burst_gap_step"] = format_kwargs.get("param_burst_gap_min_step", "0.001")
+    format_kwargs["param_burst_gap_inputmode"] = format_kwargs.get("param_burst_gap_min_inputmode", "decimal")
 
     try:
         with open(TEMPLATE_PATH, "r") as template_file:
@@ -789,6 +888,8 @@ PARAM_TYPES = {
     "BOUNCE": parse_bool,
     "MIN_MOTION_WAIT": float,
     "MAX_MOTION_WAIT": float,
+    "BURST_GAP_MIN_MS": float,
+    "BURST_GAP_MAX_MS": float,
     "BURST_GAP_MS": float,
 }
 
@@ -799,6 +900,8 @@ STATE_PARAM_TYPES = {
 }
 
 async def handle_http_client(reader, writer):
+    method = "<unknown>"
+    path = "<unknown>"
     try:
         request_line = await reader.readline()
         if not request_line:
@@ -813,6 +916,7 @@ async def handle_http_client(reader, writer):
 
         method = parts[0].upper()
         path = parts[1]
+        log_memory("http start %s %s" % (method, path), force=True)
 
         content_length = 0
         while True:
@@ -907,12 +1011,19 @@ async def handle_http_client(reader, writer):
             else:
                 body = "<html><body><p>Parameters updated.</p><p><a href=\"/\">Back</a></p></body></html>"
         elif path.startswith("/fire"):
-            request_fire("http")
-            if method == "POST":
-                body = "{\"status\":\"fired\"}"
-                content_type = "application/json"
+            if request_fire("http"):
+                if method == "POST":
+                    body = "{\"status\":\"fired\"}"
+                    content_type = "application/json"
+                else:
+                    body = "<html><body><p>FIRE triggered.</p><p><a href=\"/\">Back</a></p></body></html>"
             else:
-                body = "<html><body><p>FIRE triggered.</p><p><a href=\"/\">Back</a></p></body></html>"
+                response_code = "409 Conflict"
+                if method == "POST":
+                    body = "{\"status\":\"ignored\"}"
+                    content_type = "application/json"
+                else:
+                    body = "<html><body><p>FIRE ignored (busy).</p><p><a href=\"/\">Back</a></p></body></html>"
         else:
             body = render_index()
 
@@ -923,6 +1034,7 @@ async def handle_http_client(reader, writer):
         await writer.drain()
     except Exception as exc:
         print("HTTP client error:", exc)
+        log_memory("http error %s" % exc.__class__.__name__, force=True, collect=True)
     finally:
         try:
             writer.close()
@@ -933,10 +1045,13 @@ async def handle_http_client(reader, writer):
         except AttributeError:
             pass
 
+        log_memory("http end %s %s" % (method, path), force=True, collect=True)
+
 
 async def http_server():
     server = await asyncio.start_server(handle_http_client, "0.0.0.0", 80)
     print("HTTP server listening on port 80")
+    log_memory("http server ready", force=True, collect=True)
     while True:
         await asyncio.sleep(3600)
 
@@ -960,6 +1075,7 @@ async def ensure_wifi_ready(timeout_s=10):
 
 async def main():
     await ensure_wifi_ready()
+    log_memory("post wifi check", force=True, collect=True)
 
     if ENABLE_WEBREPL:
         try:
@@ -967,16 +1083,21 @@ async def main():
 
             webrepl.start()
             print("WebREPL started on port 8266")
+            log_memory("webrepl started", force=True, collect=True)
         except Exception as exc:
             print("Failed to start WebREPL:", exc)
+            log_memory("webrepl failed", force=True, collect=True)
 
     apply_steady_state(force=True)
+    log_memory("steady state applied", force=True, collect=True)
 
     asyncio.create_task(animation_consumer())
     asyncio.create_task(steady_refresh_task())
     asyncio.create_task(motion_poller())
     asyncio.create_task(mqtt_loop())
     asyncio.create_task(http_server())
+    asyncio.create_task(memory_monitor())
+    log_memory("tasks scheduled", force=True, collect=True)
 
     while True:
         await asyncio.sleep(60)
