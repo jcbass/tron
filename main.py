@@ -27,7 +27,7 @@ else:
     MQTT_CLIENT_IMPL = None
 
 ENABLE_WEBREPL = True
-ENABLE_MEMORY_DEBUG = True
+ENABLE_MEMORY_DEBUG = False
 _MEMORY_LOG_INTERVAL_MS = 2000
 _last_memory_log = utime.ticks_add(utime.ticks_ms(), -_MEMORY_LOG_INTERVAL_MS)
 
@@ -50,7 +50,7 @@ def log_memory(tag, *, force=False, collect=False):
 # Hardware pins / strip config
 # ----------------------------
 LED_PIN = 18             # Strip data pin
-LED_COUNT = 120
+LED_COUNT = 181
 MOTION_SENSOR_PIN = 8    # PIR OUT connected here
 
 # Onboard NeoPixel (QT Py ESP32-S3)
@@ -88,15 +88,15 @@ state = {
     "strip_brightness": 0.02,
     "strip_colortemp": COLORTEMP_MAX,
     "params": {
-        "BRIGHTNESS_FACTOR": 0.25,
+        "BRIGHTNESS_FACTOR": 0.10,
         "WARM_LEVEL": 255,
         "COOL_LEVEL": 0,
-        "DELAY_MIN": 3.0,   # delay values stored in milliseconds
-        "DELAY_MAX": 10.0,
+        "DELAY_MIN": 8.0,   # delay values stored in milliseconds
+        "DELAY_MAX": 20.0,
         "TRAIL_MIN": 1,
         "TRAIL_MAX": 12,
-        "MIN_ENDPOINT": 120,
-        "MAX_ENDPOINT": 120,
+        "MIN_ENDPOINT": 181,
+        "MAX_ENDPOINT": 181,
         "BOUNCE": False,
         "MIN_MOTION_WAIT": 5,
         "MAX_MOTION_WAIT": 20,
