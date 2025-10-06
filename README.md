@@ -101,6 +101,16 @@ mosquitto_pub -h 10.6.13.10 -t tron/cmd/fire -m 1
 
 Once deployed, the controller runs entirely from `main.py` at boot and requires no further user interaction unless you want to adjust settings or update firmware.
 
+## Animation loop
+The main animation loop is `animation_consumer()`. 
+- Every cycle, `animation_consumer()` waits until the next burst is scheduled to move (using `await asyncio.sleep_ms(wait_ms)`).
+- When it wakes up, it calls `_advance_due_bursts(now_ms)` to check if any bursts need to advance.
+- If any burst did advance, `animation_consumer()` calls `_render_active_bursts(_active_bursts)` to repaint the strip (which uses `np.write()`).
+- If no bursts moved, the strip is not repainted.
+
+### Summary:
+`animation_consumer()` sleeps until a burst is due, then calls `_advance_due_bursts()`. If any bursts moved, it repaints the strip with `_render_active_bursts()`. Otherwise, it waits for the next scheduled step.
+
 ## Notes
 Workflow for updates:
 git: fetch (to fetch all remote branches)
