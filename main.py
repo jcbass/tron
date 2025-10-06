@@ -5,6 +5,7 @@ import random
 import micropython
 import uasyncio as asyncio
 import gc
+import json
 
 try:
     from umqtt.robust import MQTTClient as RobustMQTTClient
@@ -27,9 +28,17 @@ else:
     MQTT_CLIENT_IMPL = None
 
 ENABLE_WEBREPL = True
-ENABLE_MEMORY_DEBUG = False
+ENABLE_MEMORY_DEBUG = True
 _MEMORY_LOG_INTERVAL_MS = 2000
 _last_memory_log = utime.ticks_add(utime.ticks_ms(), -_MEMORY_LOG_INTERVAL_MS)
+
+# ----------------------------
+# State persistence
+# ----------------------------
+STATE_FILE = "state.json"
+SAVE_DELAY_S = 5  # Debounce delay in seconds
+_last_state_change = 0
+_pending_save = False
 
 def log_memory(tag, *, force=False, collect=False):
     global _last_memory_log
@@ -46,11 +55,42 @@ def log_memory(tag, *, force=False, collect=False):
     print("[mem] %s free=%d alloc=%d total=%d" % (tag, free, alloc, total))
     _last_memory_log = now
 
+
+def load_state():
+    try:
+        with open(STATE_FILE, 'r') as f:
+            loaded = json.load(f)
+            print("Loaded state from %s" % STATE_FILE)
+            return loaded
+    except OSError:
+        print("No saved state file found")
+        return None
+    except ValueError:
+        print("Saved state file corrupted")
+        return None
+
+
+def save_state():
+    try:
+        with open(STATE_FILE, 'w') as f:
+            json.dump(state, f)
+        print("State saved to %s" % STATE_FILE)
+        return True
+    except OSError as e:
+        print("Failed to save state:", e)
+        return False
+
+
+def mark_state_changed():
+    global _last_state_change, _pending_save
+    _last_state_change = utime.time()
+    _pending_save = True
+
 # ----------------------------
 # Hardware pins / strip config
 # ----------------------------
 LED_PIN = 18             # Strip data pin
-LED_COUNT = 181
+LED_COUNT = 182
 MOTION_SENSOR_PIN = 8    # PIR OUT connected here
 
 # Onboard NeoPixel (QT Py ESP32-S3)
@@ -83,7 +123,7 @@ COLORTEMP_MAX = 500
 # ----------------------------
 # Shared state
 # ----------------------------
-state = {
+default_state = {
     "strip_on": False   ,
     "strip_brightness": 0.02,
     "strip_colortemp": COLORTEMP_MAX,
@@ -105,6 +145,13 @@ state = {
         "BURST_GAP_MAX_MS": 450.0,
     },
 }
+
+# Load saved state or use defaults
+loaded_state = load_state()
+if loaded_state:
+    state = loaded_state
+else:
+    state = default_state
 
 MQTT_SUB_TOPICS = (
     MQTT_TOPIC_CMD_ON,
@@ -515,6 +562,17 @@ async def memory_monitor():
     while True:
         await asyncio.sleep(30)
         log_memory("memory monitor tick", force=True, collect=True)
+
+
+async def state_saver_task():
+    global _pending_save
+    while True:
+        await asyncio.sleep(1)
+        if _pending_save:
+            elapsed = utime.time() - _last_state_change
+            if elapsed >= SAVE_DELAY_S:
+                save_state()
+                _pending_save = False
 
 
 async def motion_poller():
@@ -1003,6 +1061,7 @@ async def handle_http_client(reader, writer):
                     print("Updated strip settings via HTTP:", strip_changes)
             if params_changed or strip_changes:
                 apply_steady_state()
+                mark_state_changed()
             if strip_changes:
                 publish_mqtt_state(force=True)
             if method == "POST":
@@ -1097,6 +1156,7 @@ async def main():
     asyncio.create_task(mqtt_loop())
     asyncio.create_task(http_server())
     asyncio.create_task(memory_monitor())
+    asyncio.create_task(state_saver_task())
     log_memory("tasks scheduled", force=True, collect=True)
 
     while True:
