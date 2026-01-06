@@ -7,6 +7,8 @@ import uasyncio as asyncio
 import gc
 import json
 
+MQTT_FORCE_SIMPLE = True
+
 try:
     from umqtt.robust import MQTTClient as RobustMQTTClient
 except ImportError:
@@ -17,7 +19,10 @@ try:
 except ImportError:
     SimpleMQTTClient = None
 
-if RobustMQTTClient is not None:
+if MQTT_FORCE_SIMPLE and SimpleMQTTClient is not None:
+    MQTTClientClass = SimpleMQTTClient
+    MQTT_CLIENT_IMPL = "umqtt.simple"
+elif RobustMQTTClient is not None:
     MQTTClientClass = RobustMQTTClient
     MQTT_CLIENT_IMPL = "umqtt.robust"
 elif SimpleMQTTClient is not None:
@@ -113,9 +118,15 @@ MQTT_TOPIC_STATE_ON = b"tron/state/on"
 MQTT_TOPIC_STATE_BRIGHTNESS = b"tron/state/brightness"
 MQTT_TOPIC_STATE_COLORTEMP = b"tron/state/colortemp"
 MQTT_TOPIC_STATE_FIRE       = b"tron/state/fire"
+MQTT_TOPIC_STATUS = b"tron/status"
+MQTT_STATUS_ONLINE = b"online"
+MQTT_STATUS_OFFLINE = b"offline"
 
 MQTT_RECONNECT_DELAY_S = 5
 MQTT_KEEPALIVE = 60
+MQTT_DEBUG = True
+MQTT_DEBUG_INTERVAL_MS = 30000  # ms between status logs
+MQTT_RX_STALE_MS = 0  # ms; 0 disables RX watchdog
 
 COLORTEMP_MIN = 140
 COLORTEMP_MAX = 500
@@ -168,6 +179,11 @@ _mqtt_last_state = {
 }
 
 _mqtt_last_activity = 0
+_mqtt_message_queue = []
+_mqtt_last_rx = 0
+_mqtt_last_ping = 0
+_mqtt_last_check = 0
+_mqtt_last_status_log = 0
 
 
 def _touch_mqtt_activity():
@@ -178,6 +194,33 @@ def _touch_mqtt_activity():
 def _reset_mqtt_state_cache():
     for key in _mqtt_last_state:
         _mqtt_last_state[key] = None
+
+
+def _log_mqtt_status(now):
+    global _mqtt_last_status_log
+    if not MQTT_DEBUG:
+        return
+    if utime.ticks_diff(now, _mqtt_last_status_log) < MQTT_DEBUG_INTERVAL_MS:
+        return
+    rx_age = utime.ticks_diff(now, _mqtt_last_rx) if _mqtt_last_rx else -1
+    ping_age = utime.ticks_diff(now, _mqtt_last_ping) if _mqtt_last_ping else -1
+    check_age = utime.ticks_diff(now, _mqtt_last_check) if _mqtt_last_check else -1
+    print(
+        "[mqtt] q=%d rx_age=%dms ping_age=%dms check_age=%dms"
+        % (len(_mqtt_message_queue), rx_age, ping_age, check_age)
+    )
+    _mqtt_last_status_log = now
+
+
+def _configure_mqtt_lwt(client):
+    if client is None:
+        return
+    if not hasattr(client, "set_last_will"):
+        return
+    try:
+        client.set_last_will(MQTT_TOPIC_STATUS, MQTT_STATUS_OFFLINE, True, 0)
+    except Exception as exc:
+        print("MQTT LWT set failed:", exc)
 
 # ----------------------------
 # Initialize hardware (order matters)
@@ -622,8 +665,19 @@ async def motion_poller():
 
 
 def mqtt_message(topic, msg):
+    """Non-blocking MQTT callback - queues messages for async processing."""
+    global _mqtt_last_rx
+    MAX_QUEUE_SIZE = 64
+    if len(_mqtt_message_queue) >= MAX_QUEUE_SIZE:
+        _mqtt_message_queue.pop(0)
+        print("MQTT queue full; dropping oldest message")
+    _mqtt_message_queue.append((topic, msg))
     _touch_mqtt_activity()
+    _mqtt_last_rx = utime.ticks_ms()
 
+
+def _handle_mqtt_message(topic, msg):
+    """Process MQTT message (called from mqtt_loop, not callback)."""
     try:
         payload = msg.decode().strip()
     except Exception:
@@ -702,7 +756,7 @@ def mqtt_message(topic, msg):
 
 
 async def mqtt_loop():
-    global _mqtt_client
+    global _mqtt_client, _mqtt_last_check, _mqtt_last_ping
 
     if MQTTClientClass is None:
         print("MQTT client library not available; MQTT disabled")
@@ -714,9 +768,9 @@ async def mqtt_loop():
     client = None
     ping_interval_ms = 0
     if MQTT_KEEPALIVE:
-        ping_interval_ms = int(MQTT_KEEPALIVE * 1000 / 2)
-        if ping_interval_ms <= 0:
-            ping_interval_ms = int(MQTT_KEEPALIVE * 1000)
+        ping_interval_ms = max(10000, int(MQTT_KEEPALIVE * 1000 / 2))  # half-keepalive, min 10s
+
+    next_ping_due = 0
 
     while True:
         if client is None:
@@ -728,14 +782,27 @@ async def mqtt_loop():
                     keepalive=MQTT_KEEPALIVE,
                 )
                 client.set_callback(mqtt_message)
+                _configure_mqtt_lwt(client)
                 client.connect()
                 _touch_mqtt_activity()
                 for topic in MQTT_SUB_TOPICS:
                     client.subscribe(topic)
                 _mqtt_client = client
+                try:
+                    client.publish(MQTT_TOPIC_STATUS, MQTT_STATUS_ONLINE, retain=True)
+                    _touch_mqtt_activity()
+                except Exception as exc:
+                    print("MQTT online status publish failed:", exc)
                 publish_mqtt_state(force=True)
-                print("MQTT connected (%s)" % MQTT_CLIENT_IMPL)
+                print("MQTT connected and subscribed (%s)" % MQTT_CLIENT_IMPL)
                 log_memory("mqtt connected", force=True, collect=True)
+                if MQTT_DEBUG:
+                    print(
+                        "MQTT keepalive=%ds ping_interval=%dms"
+                        % (MQTT_KEEPALIVE, ping_interval_ms)
+                    )
+                # Initialize ping schedule
+                next_ping_due = utime.ticks_add(utime.ticks_ms(), ping_interval_ms)
             except Exception as exc:
                 print("MQTT connect failed:", exc)
                 log_memory("mqtt connect fail", force=True, collect=True)
@@ -745,11 +812,12 @@ async def mqtt_loop():
                 await asyncio.sleep(MQTT_RECONNECT_DELAY_S)
                 continue
 
+        # 1) Receive any pending messages (non-blocking check_msg)
         try:
             client.check_msg()
         except Exception as exc:
-            print("MQTT error:", exc)
-            log_memory("mqtt error", force=True, collect=True)
+            print("MQTT recv error:", exc)
+            log_memory("mqtt recv error", force=True, collect=True)
             try:
                 client.disconnect()
             except Exception:
@@ -760,26 +828,78 @@ async def mqtt_loop():
             await asyncio.sleep(MQTT_RECONNECT_DELAY_S)
             continue
 
-        if ping_interval_ms and hasattr(client, "ping"):
-            now = utime.ticks_ms()
-            if utime.ticks_diff(now, _mqtt_last_activity) >= ping_interval_ms:
+        # 2) Send periodic ping precisely on schedule
+        now = utime.ticks_ms()
+        _mqtt_last_check = now
+        if ping_interval_ms and utime.ticks_diff(now, next_ping_due) >= 0:
+            try:
+                print("MQTT ping")
+                client.ping()
+                _touch_mqtt_activity()
+                _mqtt_last_ping = now
+            except Exception as exc:
+                print("MQTT ping failed:", exc)
+                log_memory("mqtt ping fail", force=True, collect=True)
                 try:
-                    client.ping()
-                    _touch_mqtt_activity()
-                except Exception as exc:
-                    print("MQTT ping failed:", exc)
-                    log_memory("mqtt ping fail", force=True, collect=True)
-                    try:
-                        client.disconnect()
-                    except Exception:
-                        pass
-                    client = None
-                    _mqtt_client = None
-                    _reset_mqtt_state_cache()
-                    await asyncio.sleep(MQTT_RECONNECT_DELAY_S)
-                    continue
+                    client.disconnect()
+                except Exception:
+                    pass
+                client = None
+                _mqtt_client = None
+                _reset_mqtt_state_cache()
+                await asyncio.sleep(MQTT_RECONNECT_DELAY_S)
+                continue
+            next_ping_due = utime.ticks_add(now, ping_interval_ms)
 
-        await asyncio.sleep_ms(100)
+        # 3) Process queued messages efficiently (index-based, not pop(0))
+        qi = 0
+        qn = len(_mqtt_message_queue)
+        while qi < qn:
+            topic, msg = _mqtt_message_queue[qi]
+            try:
+                _handle_mqtt_message(topic, msg)
+                _touch_mqtt_activity()
+            except Exception as exc:
+                print("MQTT message handler error:", exc)
+            qi += 1
+        if qn:
+            # Drop processed messages in one operation
+            del _mqtt_message_queue[:qn]
+
+        # 4) Stale-session watchdog (3x half-keepalive = 1.5x keepalive)
+        # For 60s keepalive: stale threshold = 90s (safer than 75%)
+        if ping_interval_ms:
+            stale_threshold_ms = 3 * ping_interval_ms
+            if utime.ticks_diff(now, _mqtt_last_activity) > stale_threshold_ms:
+                print("MQTT stale session (idle >%dms); forcing reconnect" % stale_threshold_ms)
+                log_memory("mqtt watchdog reconnect", force=True, collect=True)
+                try:
+                    client.disconnect()
+                except Exception:
+                    pass
+                client = None
+                _mqtt_client = None
+                _reset_mqtt_state_cache()
+                await asyncio.sleep(MQTT_RECONNECT_DELAY_S)
+                continue
+
+        # 5) Optional RX watchdog (only if we have seen at least one message)
+        if MQTT_RX_STALE_MS and _mqtt_last_rx:
+            if utime.ticks_diff(now, _mqtt_last_rx) > MQTT_RX_STALE_MS:
+                print("MQTT RX stale (idle >%dms); forcing reconnect" % MQTT_RX_STALE_MS)
+                log_memory("mqtt rx watchdog reconnect", force=True, collect=True)
+                try:
+                    client.disconnect()
+                except Exception:
+                    pass
+                client = None
+                _mqtt_client = None
+                _reset_mqtt_state_cache()
+                await asyncio.sleep(MQTT_RECONNECT_DELAY_S)
+                continue
+
+        _log_mqtt_status(now)
+        await asyncio.sleep_ms(50)
 
 
 TEMPLATE_PATH = "template.html"
